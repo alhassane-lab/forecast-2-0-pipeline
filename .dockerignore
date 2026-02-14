@@ -1,0 +1,15 @@
+.git
+.gitignore
+.idea
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.zip
+logs
+src/logs
+test.ipynb
+.env

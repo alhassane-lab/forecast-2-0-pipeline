@@ -1,0 +1,118 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "required": ["station", "timestamp", "measurements"],
+    "properties": {
+      "station": {
+        "bsonType": "object",
+        "required": ["id", "name", "network", "location"],
+        "properties": {
+          "id": {
+            "bsonType": "string",
+            "description": "ID unique de la station"
+          },
+          "name": {
+            "bsonType": "string",
+            "description": "Nom de la station"
+          },
+          "network": {
+            "enum": ["InfoClimat", "WeatherUnderground"],
+            "description": "Réseau d'appartenance"
+          },
+          "type": {
+            "bsonType": "string",
+            "description": "Type de station (synop, static, amateur)"
+          },
+          "location": {
+            "bsonType": "object",
+            "required": ["latitude", "longitude"],
+            "properties": {
+              "latitude": {
+                "bsonType": "double",
+                "minimum": -90,
+                "maximum": 90
+              },
+              "longitude": {
+                "bsonType": "double",
+                "minimum": -180,
+                "maximum": 180
+              },
+              "elevation": {
+                "bsonType": "int",
+                "description": "Altitude en mètres"
+              },
+              "city": {
+                "bsonType": "string"
+              },
+              "country": {
+                "bsonType": "string"
+              },
+              "region": {
+                "bsonType": "string"
+              }
+            }
+          },
+          "location_geo": {
+            "bsonType": "object",
+            "description": "Point GeoJSON (lon/lat) pour index 2dsphere",
+            "properties": {
+              "type": {
+                "enum": ["Point"]
+              },
+              "coordinates": {
+                "bsonType": "array",
+                "items": {
+                  "bsonType": "double"
+                }
+              }
+            }
+          },
+          "hardware": {
+            "bsonType": "string"
+          },
+          "software": {
+            "bsonType": "string"
+          }
+        }
+      },
+      "timestamp": {
+        "bsonType": "date",
+        "description": "Timestamp de la mesure en UTC"
+      },
+      "measurements": {
+        "bsonType": "object",
+        "description": "Toutes les mesures météorologiques"
+      },
+      "data_quality": {
+        "bsonType": "object",
+        "properties": {
+          "completeness_score": {
+            "bsonType": "double",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "validation_passed": {
+            "bsonType": "bool"
+          },
+          "anomalies_detected": {
+            "bsonType": "bool"
+          }
+        }
+      },
+      "metadata": {
+        "bsonType": "object",
+        "properties": {
+          "source_file": {
+            "bsonType": "string"
+          },
+          "ingestion_timestamp": {
+            "bsonType": "string"
+          },
+          "pipeline_version": {
+            "bsonType": "string"
+          }
+        }
+      }
+    }
+  }
+}

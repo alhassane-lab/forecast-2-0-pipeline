@@ -1,0 +1,38 @@
+{
+  "pipeline": {
+    "name": "Forecast 2.0 ETL",
+    "version": "1.0.0",
+    "description": "Pipeline d'intégration de données météorologiques pour GreenAndCoop"
+  },
+  "s3": {
+    "raw_bucket": "greenandcoop-raw-data",
+    "processed_bucket": "greenandcoop-processed-data",
+    "paths": {
+      "infoclimat": "infoclimat/",
+      "wunderground": "wunderground/",
+      "processed": "processed/"
+    }
+  },
+  "mongodb": {
+    "database": "forecast_2_0",
+    "collection": "weather_measurements",
+    "batch_size": 1000
+  },
+  "validation": {
+    "strict_mode": false,
+    "required_fields": [
+      "station.id",
+      "station.name",
+      "timestamp"
+    ],
+    "ranges": {
+      "temperature": [-50, 60],
+      "humidity": [0, 100],
+      "pressure": [900, 1100]
+    }
+  },
+  "quality": {
+    "min_completeness_score": 0.7,
+    "max_anomalies_rate": 0.05
+  }
+}

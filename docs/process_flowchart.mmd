@@ -1,0 +1,17 @@
+flowchart TD
+    A([Debut pipeline]) --> B[Airbyte Sync JSON/Excel -> S3 Raw]
+    B --> C{Fichiers S3 disponibles ?}
+    C -- Non --> Z[Log erreur + arret]
+    C -- Oui --> D[Extraction InfoClimat + Wunderground]
+    D --> E[Transformation schema MongoDB]
+    E --> F[Validation + controles qualite]
+    F --> G{Enregistrement valide ?}
+    G -- Non --> H[Compter rejet + journaliser]
+    G -- Oui --> I[Ajouter au lot MongoDB-ready]
+    H --> J{Fin des enregistrements ?}
+    I --> J
+    J -- Non --> G
+    J -- Oui --> K[Migration MongoDB insert/upsert]
+    K --> L[CRUD verification + requete latence]
+    L --> M[Rapports: qualite + migration + latence]
+    M --> N([Fin pipeline])

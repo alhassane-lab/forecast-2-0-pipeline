@@ -1,0 +1,78 @@
+{
+  "infoclimat": {
+    "07015": {
+      "name": "Lille-Lesquin",
+      "type": "synop",
+      "latitude": 50.575,
+      "longitude": 3.092,
+      "elevation": 47,
+      "city": "Lille",
+      "country": "France",
+      "region": "Hauts-de-France",
+      "license": "Etalab Open License",
+      "source": "Meteo-France via infoclimat.fr"
+    },
+    "00052": {
+      "name": "Armentières",
+      "type": "static",
+      "latitude": 50.689,
+      "longitude": 2.877,
+      "elevation": 16,
+      "city": "Armentières",
+      "country": "France",
+      "region": "Hauts-de-France",
+      "license": "CC BY",
+      "source": "infoclimat.fr"
+    },
+    "000R5": {
+      "name": "Bergues",
+      "type": "static",
+      "latitude": 50.968,
+      "longitude": 2.441,
+      "elevation": 17,
+      "city": "Bergues",
+      "country": "France",
+      "region": "Hauts-de-France",
+      "license": "CC BY",
+      "source": "infoclimat.fr"
+    },
+    "STATIC0010": {
+      "name": "Hazebrouck",
+      "type": "static",
+      "latitude": 50.734,
+      "longitude": 2.545,
+      "elevation": 31,
+      "city": "Hazebrouck",
+      "country": "France",
+      "region": "Hauts-de-France",
+      "license": "CC BY",
+      "source": "infoclimat.fr"
+    }
+  },
+  "wunderground": {
+    "IICHTE19": {
+      "name": "WeerstationBS",
+      "latitude": 51.092,
+      "longitude": 2.999,
+      "elevation": 15,
+      "city": "Ichtegem",
+      "country": "Belgium",
+      "region": "West-Vlaanderen",
+      "hardware": "other",
+      "software": "EasyWeatherV1.6.6",
+      "s3_folder": "data_wunderground_Ichtegem"
+    },
+    "ILAMAD25": {
+      "name": "La Madeleine",
+      "latitude": 50.659,
+      "longitude": 3.07,
+      "elevation": 23,
+      "city": "La Madeleine",
+      "country": "France",
+      "region": "Hauts-de-France",
+      "hardware": "other",
+      "software": "EasyWeatherPro_V5.1.6",
+      "s3_folder": "data_wunderground_madelaine"
+    }
+  }
+}

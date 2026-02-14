@@ -1,0 +1,31 @@
+services:
+  pipeline:
+    build: .
+    image: forecast-2-0-pipeline:latest
+    environment:
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_SDK_LOAD_CONFIG: "1"
+      # Optional: keep support for static keys, but don't require them for local usage.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Required for real runs (MongoDB Atlas).
+      # Leave empty by default: the app will fail fast with a clear error if unset.
+      MONGODB_URI: ${MONGODB_URI:-}
+      # Optional TLS overrides (debug only for allow invalid certs).
+      MONGODB_TLS: ${MONGODB_TLS:-}
+      MONGODB_TLS_ALLOW_INVALID_CERTS: ${MONGODB_TLS_ALLOW_INVALID_CERTS:-}
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      # Enable boto3 default profile/SSO usage from your local machine.
+      - ${HOME}/.aws:/root/.aws:ro
+    # Use exec-form so args are passed to the image ENTRYPOINT without shell quirks.
+    command: ["--log-level", "INFO"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import main; import ssl; import certifi; print('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
