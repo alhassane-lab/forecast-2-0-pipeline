@@ -1,11 +1,10 @@
-"""
-Loader pour sauvegarder les données transformées dans S3
-"""
+"""Loader pour sauvegarder/lire les données transformées dans S3."""
 
 import json
 import os
+import re
 from datetime import datetime
-from typing import List, Dict
+from typing import Dict, List, Optional
 import boto3
 from loguru import logger
 
@@ -28,6 +27,15 @@ class S3Loader:
             "processed_bucket", "greenandcoop-processed-data"
         )
 
+    def _build_processed_prefix(self) -> str:
+        """Construit le prefix S3 de stockage processed."""
+        return "processed/"
+
+    def _build_filename(self, date: datetime) -> str:
+        """Construit le nom de fichier avec la date dans le nom."""
+        timestamp = datetime.utcnow().strftime("%H%M%S")
+        return f"weather_data_{date.strftime('%Y%m%d')}_{timestamp}.json"
+
     def save_processed_data(self, records: List[Dict], date: datetime) -> str:
         """
         Sauvegarde les données transformées dans S3
@@ -43,9 +51,8 @@ class S3Loader:
             logger.warning("Aucune donnée à sauvegarder dans S3")
             return ""
 
-        # Construire le chemin S3
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        s3_key = f"processed/{date.strftime('%Y/%m/%d')}/weather_data_{timestamp}.json"
+        # Construire le chemin S3 (sans sous-dossiers date)
+        s3_key = f"{self._build_processed_prefix()}{self._build_filename(date)}"
 
         try:
             # Convertir en JSON
@@ -66,4 +73,56 @@ class S3Loader:
 
         except Exception as e:
             logger.error(f"Erreur lors de la sauvegarde dans S3: {e}")
+            raise
+
+    def list_processed_keys(self, date: Optional[datetime] = None) -> List[str]:
+        """Retourne les clés JSON traitées dans le bucket processed."""
+        prefix = self._build_processed_prefix()
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+        keys: List[str] = []
+        date_token = date.strftime("%Y%m%d") if date else None
+
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj.get("Key", "")
+                if not key.endswith(".json"):
+                    continue
+                if date_token is None:
+                    keys.append(key)
+                    continue
+
+                # Nouveau format attendu: processed/weather_data_YYYYMMDD_HHMMSS.json
+                filename = key.rsplit("/", 1)[-1]
+                if re.search(rf"^weather_data_{date_token}_\d{{6}}\.json$", filename):
+                    keys.append(key)
+                    continue
+
+                # Compatibilite anciens objets: processed/YYYY/MM/DD/weather_data_*.json
+                legacy_prefix = f"processed/{date.strftime('%Y/%m/%d')}/"
+                if key.startswith(legacy_prefix):
+                    keys.append(key)
+
+        return sorted(keys)
+
+    def get_latest_processed_key(self, date: Optional[datetime] = None) -> str:
+        """Trouve la clé JSON la plus récente dans processed."""
+        keys = self.list_processed_keys(date=date)
+        if not keys:
+            date_label = date.strftime("%Y-%m-%d") if date else "all dates"
+            raise FileNotFoundError(
+                f"Aucun fichier JSON trouvé dans s3://{self.bucket}/processed/ ({date_label})"
+            )
+        return keys[-1]
+
+    def load_processed_data(self, key: str) -> List[Dict]:
+        """Charge un fichier JSON processed depuis S3."""
+        try:
+            obj = self.s3_client.get_object(Bucket=self.bucket, Key=key)
+            payload = json.loads(obj["Body"].read().decode("utf-8"))
+            if not isinstance(payload, list):
+                raise ValueError("Le fichier processed S3 doit contenir une liste JSON")
+            logger.info(f"Données chargées depuis s3://{self.bucket}/{key} ({len(payload)} records)")
+            return payload
+        except Exception as e:
+            logger.error(f"Erreur chargement S3 s3://{self.bucket}/{key}: {e}")
             raise

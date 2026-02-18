@@ -15,9 +15,10 @@ import sys
 import json
 import time
 import os
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ from pipeline.transformers.quality_checker import QualityChecker
 from loaders.s3_loader import S3Loader
 from loaders.mongodb_loader import MongoDBLoader
 from utils.logger import setup_logger
+from utils.monitoring import emit_pipeline_metrics, set_run_context
 
 # ---------------------------------------------------------------------------
 # CONFIG PATH ROBUSTE (LOCAL + DOCKER)
@@ -94,6 +96,7 @@ class Forecast2Pipeline:
             "records_extracted": 0,
             "records_transformed": 0,
             "records_validated": 0,
+            "processed_s3_path": None,
             "records_loaded": 0,
             "records_rejected": 0,
             "errors": []
@@ -211,6 +214,17 @@ class Forecast2Pipeline:
         return count
 
     # -----------------------------------------------------------------------
+    def save_validated_to_s3(self, records: List[Dict], target_date: datetime) -> str:
+        """Persist les données validées dans le bucket processed S3."""
+        if not records:
+            logger.warning("Aucune donnée validée à sauvegarder dans S3")
+            return ""
+
+        s3_path = self.s3_loader.save_processed_data(records, target_date)
+        self.stats["processed_s3_path"] = s3_path
+        return s3_path
+
+    # -----------------------------------------------------------------------
 
     def generate_quality_report(self, records: List[Dict]) -> Dict:
         """Genere et persiste un rapport de qualite JSON horodate."""
@@ -233,6 +247,8 @@ class Forecast2Pipeline:
             "status": status,
             "dry_run": bool(self.dry_run),
             "records_extracted": self.stats["records_extracted"],
+            "records_validated": self.stats["records_validated"],
+            "processed_s3_path": self.stats.get("processed_s3_path"),
             "records_loaded": self.stats.get("records_loaded", 0),
             "records_loaded_simulated": self.stats.get("records_loaded_simulated", 0),
             "duration_seconds": duration,
@@ -264,24 +280,34 @@ class Forecast2Pipeline:
         start_time = time.time()
         status = "SUCCESS"
 
+        effective_date = target_date or (datetime.utcnow() - timedelta(days=1))
         try:
             logger.info("======================================================================")
             logger.info("DÉMARRAGE PIPELINE FORECAST 2.0")
             logger.info("======================================================================")
 
+            set_run_context(stage="extract")
             # 1️⃣ EXTRACT
-            extracted_data = self.extract_data(target_date)
+            extracted_data = self.extract_data(effective_date)
 
+            set_run_context(stage="transform")
             # 2️⃣ TRANSFORM
             transformed_data = self.transform_data(extracted_data)
 
+            set_run_context(stage="validate")
             # 3️⃣ VALIDATE
             validated_data = self.validate_data(transformed_data)
 
-            # 4️⃣ LOAD
+            set_run_context(stage="save_processed_s3")
+            # 4️⃣ SAVE VALIDATED DATA TO S3 PROCESSED
+            self.save_validated_to_s3(validated_data, effective_date)
+
+            set_run_context(stage="load")
+            # 5️⃣ LOAD
             self.load_data(validated_data)
 
-            # 5️⃣ REPORT
+            set_run_context(stage="report")
+            # 6️⃣ REPORT
             self.generate_quality_report(validated_data)
 
             logger.success("PIPELINE TERMINÉ AVEC SUCCÈS")
@@ -295,6 +321,7 @@ class Forecast2Pipeline:
             duration = time.time() - start_time
             self.stats["end_time"] = datetime.utcnow()
             self.stats["duration_seconds"] = duration
+            self.stats["status"] = status
             self.write_status_file(status, duration)
             logger.info(f"Durée totale: {duration:.2f}s")
 
@@ -369,13 +396,24 @@ def main():
 
     target_date = (
         datetime.strptime(args.date, "%Y-%m-%d")
-        if args.date else None
+        if args.date else datetime.utcnow() - timedelta(days=1)
+    )
+
+    run_id = os.getenv("RUN_ID") or str(uuid.uuid4())
+    set_run_context(
+        run_id=run_id,
+        target_date=target_date.strftime("%Y-%m-%d"),
+        dry_run=args.dry_run,
     )
 
     pipeline = Forecast2Pipeline(config, dry_run=args.dry_run)
-    stats = pipeline.run(target_date)
+    stats: Dict[str, Any] = {}
+    try:
+        stats = pipeline.run(target_date)
+    finally:
+        emit_pipeline_metrics(stats or pipeline.stats)
 
-    sys.exit(0 if not stats["errors"] else 1)
+    sys.exit(0 if not stats.get("errors") else 1)
 
 
 if __name__ == "__main__":

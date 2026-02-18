@@ -4,8 +4,8 @@
 1. Extraction depuis S3 (ou fichiers locaux) de donnees InfoClimat + Wunderground.
 2. Transformation vers schema cible MongoDB (`station`, `timestamp`, `measurements`, `data_quality`, `metadata`).
 3. Validation (champs obligatoires, coherence, plages de valeurs).
-4. Export JSON `mongodb_ready_records.json`.
-5. Import en base MongoDB Atlas (insert/upsert).
+4. Export des donnees validees vers `S3_PROCESSED_BUCKET` (prefix `processed/`, format `processed/weather_data_YYYYMMDD_HHMMSS.json`).
+5. Import en base MongoDB Atlas depuis S3 processed (insert/upsert).
 6. Rapport qualite post-migration (`error_rate`, rejet, completude).
 
 ## Scripts
@@ -32,10 +32,16 @@ poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json
 # 4) Migration MongoDB (upsert)
 poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json --upsert
 
-# 5) CRUD demo
+# 5) Migration MongoDB depuis S3 (dernier fichier de la date)
+poetry run migrate-mongodb --input-s3-date 2026-02-12
+
+# 6) Migration MongoDB depuis S3 (dernier fichier global)
+poetry run migrate-mongodb --input-s3-latest
+
+# 7) CRUD demo
 poetry run mongodb-crud
 
-# 6) Reporting latence
+# 8) Reporting latence
 poetry run latency-report --station-id ILAMAD25 --date 2026-02-12 --iterations 10
 ```
 

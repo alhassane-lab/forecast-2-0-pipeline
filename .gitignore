@@ -13,3 +13,13 @@ src/logs/
 
 # Local datasets / artifacts
 data/
+
+# Terraform local state/plan
+*.tfstate
+*.tfstate.*
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform/
