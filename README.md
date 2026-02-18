@@ -8,6 +8,8 @@ Ce projet met en place une chaine Data Engineering pour:
 - migrer les donnees vers MongoDB,
 - mesurer la qualite des donnees et le temps d'accessibilite.
 
+Audit ECS-only (suppression reliquats Atlas + optimisation): `docs/audit_ecs_only_2026-02-18.md`
+
 ## 2) Architecture technique
 
 `Airbyte (JSON + Excel) -> S3 (raw) -> ETL Python (transform/validate) -> MongoDB -> reporting qualite + latence`
@@ -42,7 +44,7 @@ flowchart TD
 - Poetry
 - Docker Desktop
 - AWS credentials (acces S3)
-- URI MongoDB Atlas
+- URI MongoDB cible (ECS/local)
 
 ### Installation
 ```bash
@@ -57,6 +59,18 @@ Le fichier `requirements.txt` est fourni avec versions exactes (pinned) pour rec
 ```bash
 pip install -r requirements.txt
 ```
+
+## 4ter) Organisation des dossiers
+
+- `src/`: code Python applicatif (ETL, loaders, utilitaires, tests).
+- `src/scripts/`: scripts Python executables via Poetry (`poetry run ...`).
+- `ops/`: scripts shell d'exploitation/infra (deploy Terraform, cron local, ops AWS).
+- `infra/terraform/`: infrastructure as code.
+- `docs/`: documentation architecture et runbooks.
+
+Convention:
+- `src/scripts/*` = Python runtime du pipeline.
+- `ops/*` = shell/infra uniquement.
 
 ## 5) Airbyte -> S3 (Excel + JSON)
 Guide complet: `docs/airbyte_setup_s3.md`
@@ -164,9 +178,9 @@ Inclut les elements demandes:
 pytest -vv src/tests
 ```
 
-## 11) Docker (Atlas vs Mongo local)
+## 11) Docker (ECS/remote vs Mongo local)
 
-### Atlas (mode default)
+### ECS/remote Mongo (mode default)
 Prerequis: `MONGODB_URI` dans `.env`.
 
 ```bash
@@ -205,16 +219,16 @@ make mongo-shell
 ### Logs structurés et métriques EMF
 - `setup_logger` peut continuer à écrire un log texte local ou produire du JSON (`LOG_FORMAT=json`) avec `set_run_context` injecté pour `run_id`, `target_date`, `stage`, `dry_run`, etc. Tous les handlers alimentent `logs/` (et `stdout` pour CloudWatch via ECS).
 - Chaque exécution écrit `logs/pipeline_status.json`, `logs/quality_report_*.json`, `logs/migration_report_*.json` ainsi que les rapports de latence `logs/query_latency_report_*.json`. Utilise ces artefacts pour vérifier la fraîcheur, les rejets et la latence en post mortem.
-- Le helper `utils.monitoring.emit_pipeline_metrics` imprime une ligne JSON EMF sur `stdout` avec `Namespace=Forecast2Pipeline`, dimensions `env` + `cluster` (par défaut `atlas`), et métriques `duration_seconds`, `records_*`, `error_rate`, `run_success`. Configure un log group CloudWatch pour parser ces lignes et créer des métriques/alertes dans CloudWatch sans agent additionnel.
+- Le helper `utils.monitoring.emit_pipeline_metrics` imprime une ligne JSON EMF sur `stdout` avec `Namespace=Forecast2Pipeline`, dimensions `env` + `cluster` (par défaut `ecs`), et métriques `duration_seconds`, `records_*`, `error_rate`, `run_success`. Configure un log group CloudWatch pour parser ces lignes et créer des métriques/alertes dans CloudWatch sans agent additionnel.
 
-### Cron pour MongoDB Atlas
-- Le script `scripts/cron-run-pipeline.sh` définit `TARGET_DATE` sur la veille UTC (ou prend un argument), source le `.env`, génère un `RUN_ID`, puis lance `docker compose run --rm pipeline` avec `--date`, ce qui rend la planification portable sur n’importe quel hôte Linux.
+### Cron local (fallback)
+- Le script `ops/cron-run-pipeline.sh` définit `TARGET_DATE` sur la veille UTC (ou prend un argument), source le `.env`, génère un `RUN_ID`, puis lance `docker compose run --rm pipeline` avec `--date`, ce qui rend la planification portable sur n’importe quel hôte Linux.
 - Exemples de crontab (ajuster le chemin) :
   ```
   # tous les jours à 05:00 UTC
-  0 5 * * * /bin/bash /path/to/forecast-2-0-pipeline/scripts/cron-run-pipeline.sh >> /path/to/forecast-2-0-pipeline/logs/cron.log 2>&1
+  0 5 * * * /bin/bash /path/to/forecast-2-0-pipeline/ops/cron-run-pipeline.sh >> /path/to/forecast-2-0-pipeline/logs/cron.log 2>&1
   ```
-- Tu peux passer une date spécifique : `scripts/cron-run-pipeline.sh 2026-02-12`. Le log `cron.log` capture la date exécutée, le `RUN_ID` utilisé et les sorties `loguru`.
+- Tu peux passer une date spécifique : `ops/cron-run-pipeline.sh 2026-02-12`. Le log `cron.log` capture la date exécutée, le `RUN_ID` utilisé et les sorties `loguru`.
 
 ### Planification hebdomadaire ECS (production actuelle)
 
@@ -405,33 +419,30 @@ cat logs/pipeline_status.json
 
 ### C. Lancer en one-shot sur ECS
 
-Le task definition pipeline existe deja: `forecast-pipeline-ecs-manual:1`.
+Le task definition pipeline actif est `forecast-pipeline-ecs:3` (sans auth MongoDB, `MONGODB_URI` injecte en env dans la task definition).
 Etat actuel du cluster MongoDB de ce projet: mode pre-auth (pas d'identifiant dans l'URI).
 
 Commande type:
 ```bash
 REGION="eu-west-1"
 CLUSTER="forecast-prod-mongo-cluster"
-TASK_DEF="forecast-pipeline-ecs-manual:1"
+TASK_DEF="forecast-pipeline-ecs:3"
 SUBNETS="subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822"
 SG="sg-062056db10833656d"
-MONGO_URI="mongodb://mongo-1.mongo.internal:27017,mongo-2.mongo.internal:27017,mongo-3.mongo.internal:27017/forecast_2_0?replicaSet=rs0"
-
-OVERRIDES=$(python3 -c 'import json,sys; uri=sys.argv[1]; print(json.dumps({"containerOverrides":[{"name":"forecast-pipeline","command":["--date","2026-02-18","--log-level","INFO"],"environment":[{"name":"MONGODB_URI","value":uri}]}]}))' "$MONGO_URI")
 
 TASK_ARN=$(aws ecs run-task \
   --cluster "$CLUSTER" \
   --launch-type FARGATE \
   --task-definition "$TASK_DEF" \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-  --overrides "$OVERRIDES" \
+  --overrides '{"containerOverrides":[{"name":"forecast-pipeline","command":["--date","2026-02-18","--log-level","INFO"]}]}' \
   --region "$REGION" \
   --query 'tasks[0].taskArn' --output text)
 
 echo "$TASK_ARN"
 ```
 
-Si vous reactivez l'auth MongoDB plus tard, remplacez `MONGO_URI` par une URI avec credentials:
+Si vous reactivez l'auth MongoDB plus tard, mettez a jour la task definition pour injecter:
 `mongodb://admin:<password>@mongo-1.mongo.internal:27017,mongo-2.mongo.internal:27017,mongo-3.mongo.internal:27017/forecast_2_0?replicaSet=rs0&authSource=admin`
 
 Suivi jusqu'a fin:
@@ -470,6 +481,16 @@ poetry run migrate-mongodb --input-s3-latest --log-level INFO
 Important:
 - En local, `migrate-mongodb` vers `mongo-*.mongo.internal` ne fonctionne pas hors VPC AWS (DNS prive non resolvable).
 - Pour cette cible MongoDB ECS, lancer la migration depuis ECS (task definition `forecast-pipeline-ecs:4`) ou via une machine dans le VPC.
+
+Run migration S3->Mongo dans ECS:
+```bash
+aws ecs run-task \
+  --cluster forecast-prod-mongo-cluster \
+  --launch-type FARGATE \
+  --task-definition forecast-pipeline-ecs:4 \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822],securityGroups=[sg-062056db10833656d],assignPublicIp=ENABLED}" \
+  --region eu-west-1
+```
 
 ### F. Troubleshooting rapide
 

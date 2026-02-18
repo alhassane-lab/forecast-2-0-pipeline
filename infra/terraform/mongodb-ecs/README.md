@@ -36,11 +36,11 @@ cp terraform.tfvars.example terraform.tfvars
 Required vars to check:
 - `public_subnet_id`: subnet public (route Internet Gateway) for NAT.
 - `private_subnet_ids`: private subnets used for AZ mapping.
-- `mongo_image`: ECR image URI built with `scripts/aws/build_push_mongodb_rs_image.sh`.
+- `mongo_image`: ECR image URI built with `ops/aws/build_push_mongodb_rs_image.sh`.
 
 2. Apply Terraform:
 ```bash
-bash scripts/aws/deploy_mongodb_rs_terraform.sh
+bash ops/aws/deploy_mongodb_rs_terraform.sh
 ```
 
 3. Read outputs:

@@ -23,3 +23,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 .terraform/
+
+# macOS
+.DS_Store
+
+# Terraform local plan filename often used in this repo
+tfplan

@@ -29,7 +29,7 @@ def patch_log_context(record: Dict[str, Any]) -> None:
     """Ajoute les paires run-context à tous les enregistrements loguru."""
     saved = get_run_context()
     env_name = saved.get("env") or os.getenv("ENVIRONMENT") or os.getenv("ENV") or "dev"
-    cluster_name = saved.get("cluster") or os.getenv("CLUSTER_NAME") or "atlas"
+    cluster_name = saved.get("cluster") or os.getenv("CLUSTER_NAME") or "ecs"
 
     context: Dict[str, Any] = {
         **saved,

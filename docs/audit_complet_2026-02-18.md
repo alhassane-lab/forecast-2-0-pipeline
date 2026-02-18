@@ -5,7 +5,7 @@
 - Code Python ETL: `src/`
 - Tests: `src/tests/`
 - Runtime local: `Dockerfile`, `docker-compose*.yml`
-- Infra AWS MongoDB: `infra/terraform/mongodb-ecs/`, `docker/mongodb-rs/`, `scripts/aws/`
+- Infra AWS MongoDB: `infra/terraform/mongodb-ecs/`, `docker/mongodb-rs/`, `ops/aws/`
 - Documentation: `README.md`, `docs/`
 
 ## Resume executif

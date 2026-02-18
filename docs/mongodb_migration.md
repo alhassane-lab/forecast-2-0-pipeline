@@ -5,7 +5,7 @@
 2. Transformation vers schema cible MongoDB (`station`, `timestamp`, `measurements`, `data_quality`, `metadata`).
 3. Validation (champs obligatoires, coherence, plages de valeurs).
 4. Export des donnees validees vers `S3_PROCESSED_BUCKET` (prefix `processed/`, format `processed/weather_data_YYYYMMDD_HHMMSS.json`).
-5. Import en base MongoDB Atlas depuis S3 processed (insert/upsert).
+5. Import en base MongoDB ECS replica set depuis S3 processed (insert/upsert).
 6. Rapport qualite post-migration (`error_rate`, rejet, completude).
 
 ## Scripts

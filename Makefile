@@ -1,11 +1,11 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up-atlas up-local down-local logs test mongo-shell mongo-shell-root
+.PHONY: help up-ecs up-local down-local logs test mongo-shell mongo-shell-root
 
 help:
 	@printf "%s\n" \
 		"Targets:" \
-		"  up-atlas         Start stack (Atlas config) with build" \
+		"  up-ecs           Start stack (ECS/remote Mongo config) with build" \
 		"  up-local         Start stack (local override) with build" \
 		"  down-local       Stop local stack and remove volumes" \
 		"  logs             Follow docker compose logs" \
@@ -13,7 +13,7 @@ help:
 		"  mongo-shell      Open mongosh as app user (uses env vars/.env)" \
 		"  mongo-shell-root Open mongosh as root user (uses env vars/.env)"
 
-up-atlas:
+up-ecs:
 	docker compose up --build
 
 up-local:

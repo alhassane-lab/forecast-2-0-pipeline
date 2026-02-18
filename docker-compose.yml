@@ -10,7 +10,7 @@ services:
       # Optional: keep support for static keys, but don't require them for local usage.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      # Required for real runs (MongoDB Atlas).
+      # Required for real runs against MongoDB (ECS/local).
       # Leave empty by default: the app will fail fast with a clear error if unset.
       MONGODB_URI: ${MONGODB_URI:-}
       # Optional TLS overrides (debug only for allow invalid certs).
