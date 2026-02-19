@@ -65,7 +65,7 @@ resource "aws_route_table" "mongo_private" {
 }
 
 resource "aws_route_table_association" "mongo_private" {
-  count          = length(aws_subnet.mongo_private)
+  count          = length(var.private_subnet_ids)
   subnet_id      = aws_subnet.mongo_private[count.index].id
   route_table_id = aws_route_table.mongo_private.id
 }
@@ -228,15 +228,20 @@ resource "aws_iam_role_policy" "task_execution_secrets" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "kms:Decrypt"
-        ]
-        Resource = [
-          aws_secretsmanager_secret.mongo_bootstrap.arn,
-          "*"
-        ]
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.mongo_bootstrap.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = {
+            "kms:ViaService"                  = "secretsmanager.${var.aws_region}.amazonaws.com"
+            "kms:EncryptionContext:SecretARN" = aws_secretsmanager_secret.mongo_bootstrap.arn
+          }
+        }
       }
     ]
   })

@@ -96,6 +96,38 @@ class TestDataHarmonizer:
         assert measurements["cloud_cover"]["value"] is None
         assert measurements["snow_depth"]["value"] is None
 
+    def test_harmonize_infoclimat_timestamp_normalized(self, harmonizer, sample_infoclimat_record):
+        """Le timestamp InfoClimat doit etre normalise en ISO."""
+        result = harmonizer.harmonize_infoclimat(sample_infoclimat_record)
+        assert result["timestamp"] == "2024-10-05T14:00:00"
+
+    def test_harmonize_wunderground_wind_direction_measurement(self, harmonizer):
+        """wind_direction WU doit utiliser le meme schema {value, unit}."""
+        record = {
+            "station_id": "ILAMAD25",
+            "station_name": "La Madeleine",
+            "latitude": 50.659,
+            "longitude": 3.07,
+            "elevation": 23,
+            "city": "La Madeleine",
+            "country": "France",
+            "region": "Hauts-de-France",
+            "hardware": "other",
+            "software": "EasyWeatherPro",
+            "timestamp": "10/05/24 02:30 PM",
+            "measurements": {
+                "temperature": 18.5,
+                "humidity": 72,
+                "pressure": 1015.3,
+                "wind_direction": "West",
+            },
+        }
+
+        result = harmonizer.harmonize_wunderground(record)
+        assert result["timestamp"] == "2024-10-05T14:30:00"
+        assert result["measurements"]["wind_direction"]["value"] == 270.0
+        assert result["measurements"]["wind_direction"]["unit"] == "degrees"
+
 
 class TestDataValidator:
     """Tests pour le module de validation"""

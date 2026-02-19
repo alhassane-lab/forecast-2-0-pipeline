@@ -3,7 +3,7 @@
 import argparse
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,12 +44,21 @@ def main() -> None:
     loader = MongoDBLoader(_load_config(args.config), dry_run=False)
     col = loader.collection
 
-    date_start = f"{args.date}T00:00:00"
-    date_end = f"{args.date}T23:59:59"
+    target_day = datetime.strptime(args.date, "%Y-%m-%d")
+    next_day = target_day + timedelta(days=1)
+
+    date_start_iso = target_day.strftime("%Y-%m-%dT00:00:00")
+    date_end_iso = target_day.strftime("%Y-%m-%dT23:59:59")
+    date_start_space = target_day.strftime("%Y-%m-%d 00:00:00")
+    date_end_space = target_day.strftime("%Y-%m-%d 23:59:59")
 
     query = {
         "station.id": args.station_id,
-        "timestamp": {"$gte": date_start, "$lte": date_end},
+        "$or": [
+            {"timestamp": {"$gte": target_day, "$lt": next_day}},
+            {"timestamp": {"$gte": date_start_iso, "$lte": date_end_iso}},
+            {"timestamp": {"$gte": date_start_space, "$lte": date_end_space}},
+        ],
     }
 
     durations = []
@@ -75,7 +84,7 @@ def main() -> None:
 
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     report_path = LOGS_DIR / f"query_latency_report_{datetime.utcnow():%Y%m%d_%H%M%S}.json"
-    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
 
     logger.success(
         f"Latency avg={report['latency_ms']['avg']}ms | matched={matched} | report={report_path}"

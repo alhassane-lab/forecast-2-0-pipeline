@@ -38,12 +38,24 @@ Required vars to check:
 - `private_subnet_ids`: private subnets used for AZ mapping.
 - `mongo_image`: ECR image URI built with `ops/aws/build_push_mongodb_rs_image.sh`.
 
-2. Apply Terraform:
+2. Configure remote state backend (S3 + optional DynamoDB lock):
+```bash
+cp backend.hcl.example backend.hcl
+# edit backend.hcl, then export:
+export TF_BACKEND_BUCKET="forecast-terraform-state-eu-west-1"
+export TF_BACKEND_KEY="mongodb-ecs/prod/terraform.tfstate"
+export TF_BACKEND_REGION="eu-west-1"
+export TF_BACKEND_USE_LOCKFILE="true"
+# optional legacy locking:
+# export TF_BACKEND_DYNAMODB_TABLE="forecast-terraform-locks"
+```
+
+3. Apply Terraform:
 ```bash
 bash ops/aws/deploy_mongodb_rs_terraform.sh
 ```
 
-3. Read outputs:
+4. Read outputs:
 ```bash
 terraform -chdir=infra/terraform/mongodb-ecs output
 ```

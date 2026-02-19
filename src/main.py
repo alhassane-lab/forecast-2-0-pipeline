@@ -366,9 +366,12 @@ def load_config(config_path: str) -> Dict:
     permettre l'execution de base.
     """
     path = Path(config_path)
-
     if not path.is_absolute():
-        path = BASE_DIR / path
+        cwd_candidate = Path.cwd() / path
+        if cwd_candidate.exists():
+            path = cwd_candidate
+        else:
+            path = BASE_DIR / path
 
     try:
         with open(path, "r", encoding="utf-8") as f:

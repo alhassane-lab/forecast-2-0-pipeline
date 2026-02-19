@@ -57,7 +57,7 @@ class DataHarmonizer:
                 "location": location,
                 "location_geo": location_geo,
             },
-            "timestamp": record.get("timestamp"),
+            "timestamp": self._parse_timestamp(record.get("timestamp")),
             "measurements": {
                 "temperature": self._create_measurement(
                     measurements.get("temperature"), "°C"
@@ -170,7 +170,10 @@ class DataHarmonizer:
                 "wind_gust": self._create_measurement(
                     measurements.get("wind_gust"), "km/h"
                 ),
-                "wind_direction": measurements.get("wind_direction"),
+                "wind_direction": self._create_measurement(
+                    self._normalize_wind_direction(measurements.get("wind_direction")),
+                    "degrees",
+                ),
                 "precipitation_rate": self._create_measurement(
                     measurements.get("precip_rate"), "mm/h"
                 ),
@@ -224,6 +227,49 @@ class DataHarmonizer:
             "value": converted_value,
             "unit": unit
         }
+
+    def _normalize_wind_direction(self, value: Any) -> Optional[float]:
+        """Normalise une direction de vent en degres (0-360)."""
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        direction = str(value).strip().upper()
+        if not direction:
+            return None
+
+        compass_to_deg = {
+            "N": 0.0,
+            "NNE": 22.5,
+            "NE": 45.0,
+            "ENE": 67.5,
+            "E": 90.0,
+            "ESE": 112.5,
+            "SE": 135.0,
+            "SSE": 157.5,
+            "S": 180.0,
+            "SSW": 202.5,
+            "SW": 225.0,
+            "WSW": 247.5,
+            "W": 270.0,
+            "WNW": 292.5,
+            "NW": 315.0,
+            "NNW": 337.5,
+            "NORTH": 0.0,
+            "EAST": 90.0,
+            "SOUTH": 180.0,
+            "WEST": 270.0,
+        }
+
+        if direction in compass_to_deg:
+            return compass_to_deg[direction]
+
+        try:
+            return float(direction)
+        except ValueError:
+            return None
 
     from typing import Any, Optional
     from datetime import datetime

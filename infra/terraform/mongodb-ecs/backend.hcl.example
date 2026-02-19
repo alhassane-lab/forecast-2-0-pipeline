@@ -1,0 +1,7 @@
+bucket         = "forecast-terraform-state-eu-west-1"
+key            = "mongodb-ecs/prod/terraform.tfstate"
+region         = "eu-west-1"
+encrypt        = true
+use_lockfile   = true
+# Optional legacy lock (deprecated by Terraform S3 backend):
+# dynamodb_table = "forecast-terraform-locks"

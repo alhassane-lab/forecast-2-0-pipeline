@@ -26,7 +26,7 @@ logs:
 	docker compose logs -f --tail=200
 
 test:
-	pytest -vv src/tests
+	poetry run pytest -vv src/tests
 
 # App user (readWrite on $MONGO_DB). Override via .env if needed.
 mongo-shell:

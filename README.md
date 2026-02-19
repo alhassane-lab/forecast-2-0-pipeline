@@ -159,7 +159,7 @@ Collection principale:
 Index crees via `MongoDBLoader`:
 - `station.id + timestamp`
 - `station.network + timestamp`
-- index geospatial `station.location`
+- index geospatial `station.location_geo`
 
 ## 9) Support de presentation
 Trame prete: `docs/presentation_support.md`
