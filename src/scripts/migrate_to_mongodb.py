@@ -1,4 +1,4 @@
-"""Migre un fichier JSON MongoDB-ready vers MongoDB (ECS/local)."""
+"""Migre un fichier JSON MongoDB-ready vers MongoDB sur AWS ECS."""
 
 import argparse
 import json

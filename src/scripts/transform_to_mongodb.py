@@ -40,24 +40,9 @@ def _load_config(config_path: str) -> Dict:
 def _extract_records(
     config: Dict,
     date: Optional[datetime],
-    source_mode: str,
-    infoclimat_file: Optional[str],
-    wunderground_file: Optional[str],
-    wunderground_station: str,
 ) -> Dict[str, List[Dict]]:
     info = InfoClimatExtractor(config)
     wu = WundergroundExtractor(config)
-
-    if source_mode == "local":
-        if not infoclimat_file and not wunderground_file:
-            raise ValueError("En mode local, fournir --infoclimat-file ou --wunderground-file")
-
-        return {
-            "infoclimat": info.extract_from_local(infoclimat_file) if infoclimat_file else [],
-            "wunderground": wu.extract_from_local(wunderground_file, station_id=wunderground_station)
-            if wunderground_file
-            else [],
-        }
 
     target_date = date or datetime.utcnow()
     return {
@@ -124,10 +109,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Transform weather data to MongoDB-compatible JSON")
     parser.add_argument("--date", help="Date cible YYYY-MM-DD pour extraction S3")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Chemin config JSON")
-    parser.add_argument("--source-mode", choices=["s3", "local"], default="s3")
-    parser.add_argument("--infoclimat-file", help="Fichier local JSON/JSONL InfoClimat")
-    parser.add_argument("--wunderground-file", help="Fichier local JSON/JSONL Wunderground")
-    parser.add_argument("--wunderground-station", default="ILAMAD25", help="Station WU en mode local")
     parser.add_argument(
         "--output",
         default=str(DATA_DIR / "processed" / "mongodb_ready_records.json"),
@@ -148,10 +129,6 @@ def main() -> None:
     extracted = _extract_records(
         config=config,
         date=target_date,
-        source_mode=args.source_mode,
-        infoclimat_file=args.infoclimat_file,
-        wunderground_file=args.wunderground_file,
-        wunderground_station=args.wunderground_station,
     )
 
     result = _transform_and_validate(config, extracted)

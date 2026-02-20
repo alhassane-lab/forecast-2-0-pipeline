@@ -1,7 +1,7 @@
 # Migration MongoDB: logique et execution
 
 ## Logique
-1. Extraction depuis S3 (ou fichiers locaux) de donnees InfoClimat + Wunderground.
+1. Extraction depuis S3 de donnees InfoClimat + Wunderground.
 2. Transformation vers schema cible MongoDB (`station`, `timestamp`, `measurements`, `data_quality`, `metadata`).
 3. Validation (champs obligatoires, coherence, plages de valeurs).
 4. Export des donnees validees vers `S3_PROCESSED_BUCKET` (prefix `processed/`, format `processed/weather_data_YYYYMMDD_HHMMSS.json`).
@@ -18,30 +18,24 @@
 
 ```bash
 # 1) Transformation depuis S3
-poetry run transform-mongodb --source-mode s3 --date 2026-02-12
+poetry run transform-mongodb --date 2026-02-12
 
-# 2) Transformation depuis fichiers locaux
-poetry run transform-mongodb \
-  --source-mode local \
-  --infoclimat-file ./data/raw/infoclimat.json \
-  --wunderground-file ./data/raw/wunderground.json
-
-# 3) Migration MongoDB (insert)
+# 2) Migration MongoDB (insert)
 poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json
 
-# 4) Migration MongoDB (upsert)
+# 3) Migration MongoDB (upsert)
 poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json --upsert
 
-# 5) Migration MongoDB depuis S3 (dernier fichier de la date)
+# 4) Migration MongoDB depuis S3 (dernier fichier de la date)
 poetry run migrate-mongodb --input-s3-date 2026-02-12
 
-# 6) Migration MongoDB depuis S3 (dernier fichier global)
+# 5) Migration MongoDB depuis S3 (dernier fichier global)
 poetry run migrate-mongodb --input-s3-latest
 
-# 7) CRUD demo
+# 6) CRUD demo
 poetry run mongodb-crud
 
-# 8) Reporting latence
+# 7) Reporting latence
 poetry run latency-report --station-id ILAMAD25 --date 2026-02-12 --iterations 10
 ```
 

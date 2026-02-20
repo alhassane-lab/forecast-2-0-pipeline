@@ -1,5 +1,5 @@
 flowchart TD
-    subgraph RUNTIME[Pipeline runtime]
+    subgraph RUNTIME[Execution pipeline AWS-only]
         A([Debut pipeline]) --> B[Airbyte Sync JSON/Excel -> S3 Raw]
         B --> C{Fichiers S3 disponibles ?}
         C -- Non --> Z[Log erreur + arret]
@@ -13,18 +13,17 @@ flowchart TD
         I --> J
         J -- Non --> G
         J -- Oui --> K[Enregistrer lot valide dans S3 processed]
-        K --> L[Charger MongoDB insert/upsert]
+        K --> L[Charger MongoDB ECS insert/upsert]
         L --> M[Generer quality report + status pipeline]
         M --> N([Fin pipeline])
     end
 
-    subgraph MIGRATION[Migration offline optionnelle]
-        S3P[(S3 processed)] --> X[migrate_to_mongodb.py]
-        X --> Y[Rapport migration]
+    subgraph PLATFORM[Industrialisation AWS]
+        P1[Build images Docker pipeline + MongoDB RS] --> P2[Push images ECR]
+        P2 --> P3[Deploy Terraform ECS MongoDB + ECS pipeline]
+        P3 --> P4[Replica set MongoDB ECS: mongo-1 mongo-2 mongo-3]
+        P3 --> P5[Scheduler EventBridge -> tache ECS pipeline]
     end
 
-    subgraph PLATFORM[Industrialisation et infra AWS]
-        P1[Docker build image MongoDB RS] --> P2[Push image ECR]
-        P2 --> P3[Deploy Terraform ECS MongoDB]
-        P3 --> P4[Replica set 3 noeuds: mongo-1 mongo-2 mongo-3]
-    end
+    P5 --> A
+    P4 --> L

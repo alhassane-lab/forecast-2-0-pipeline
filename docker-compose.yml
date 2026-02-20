@@ -7,10 +7,10 @@ services:
       AWS_DEFAULT_REGION: ${AWS_REGION:-eu-west-1}
       AWS_PROFILE: ${AWS_PROFILE:-}
       AWS_SDK_LOAD_CONFIG: "1"
-      # Optional: keep support for static keys, but don't require them for local usage.
+      # Optional: static keys; prefer IAM task roles in ECS.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      # Required for real runs against MongoDB (ECS/local).
+      # Required for runs against MongoDB ECS.
       # Leave empty by default: the app will fail fast with a clear error if unset.
       MONGODB_URI: ${MONGODB_URI:-}
       # Optional TLS overrides (debug only for allow invalid certs).
@@ -20,7 +20,7 @@ services:
       - .env
     volumes:
       - ./logs:/app/logs
-      # Enable boto3 default profile/SSO usage from your local machine.
+      # Optional for local CLI-driven runs; not used by ECS tasks.
       - ${HOME}/.aws:/root/.aws:ro
     # Use exec-form so args are passed to the image ENTRYPOINT without shell quirks.
     command: ["--log-level", "INFO"]

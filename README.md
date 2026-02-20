@@ -19,7 +19,7 @@ Le logigramme formel est disponible dans `docs/process_flowchart.mmd`.
 
 ```mermaid
 flowchart TD
-    subgraph RUNTIME[Pipeline runtime]
+    subgraph RUNTIME[Execution pipeline AWS-only]
         A([Debut pipeline]) --> B[Airbyte Sync JSON/Excel -> S3 Raw]
         B --> C{Fichiers S3 disponibles ?}
         C -- Non --> Z[Log erreur + arret]
@@ -33,21 +33,20 @@ flowchart TD
         I --> J
         J -- Non --> G
         J -- Oui --> K[Enregistrer lot valide dans S3 processed]
-        K --> L[Charger MongoDB insert/upsert]
+        K --> L[Charger MongoDB ECS insert/upsert]
         L --> M[Generer quality report + status pipeline]
         M --> N([Fin pipeline])
     end
 
-    subgraph MIGRATION[Migration offline optionnelle]
-        S3P[(S3 processed)] --> X[migrate_to_mongodb.py]
-        X --> Y[Rapport migration]
+    subgraph PLATFORM[Industrialisation AWS]
+        P1[Build images Docker pipeline + MongoDB RS] --> P2[Push images ECR]
+        P2 --> P3[Deploy Terraform ECS MongoDB + ECS pipeline]
+        P3 --> P4[Replica set MongoDB ECS: mongo-1 mongo-2 mongo-3]
+        P3 --> P5[Scheduler EventBridge -> tache ECS pipeline]
     end
 
-    subgraph PLATFORM[Industrialisation et infra AWS]
-        P1[Docker build image MongoDB RS] --> P2[Push image ECR]
-        P2 --> P3[Deploy Terraform ECS MongoDB]
-        P3 --> P4[Replica set 3 noeuds: mongo-1 mongo-2 mongo-3]
-    end
+    P5 --> A
+    P4 --> L
 ```
 
 ## 4) Installation environnement
@@ -57,7 +56,7 @@ flowchart TD
 - Poetry
 - Docker Desktop
 - AWS credentials (acces S3)
-- URI MongoDB cible (ECS/local)
+- URI MongoDB ECS cible
 
 ### Installation
 ```bash
@@ -77,7 +76,7 @@ pip install -r requirements.txt
 
 - `src/`: code Python applicatif (ETL, loaders, utilitaires, tests).
 - `src/scripts/`: scripts Python executables via Poetry (`poetry run ...`).
-- `ops/`: scripts shell d'exploitation/infra (deploy Terraform, cron local, ops AWS).
+- `ops/`: scripts shell d'exploitation/infra (deploy Terraform, scheduling, ops AWS).
 - `infra/terraform/`: infrastructure as code.
 - `docs/`: documentation architecture et runbooks.
 
@@ -98,18 +97,8 @@ Objectif attendu:
 Script: `src/scripts/transform_to_mongodb.py`
 
 ```bash
-# Mode S3
-poetry run transform-mongodb --source-mode s3 --date 2026-02-18
-
-# Mode local (debug)
-poetry run transform-mongodb \
-  --source-mode local \
-  --infoclimat-file /path/to/infoclimat.jsonl \
-  --wunderground-file /path/to/wunderground.jsonl
+poetry run transform-mongodb --date 2026-02-18
 ```
-
-Important:
-- En mode `local`, les fichiers passes en argument doivent exister (le dossier `data/raw/` ne contient pas d'exemple par defaut, uniquement `.gitkeep`).
 
 Sortie:
 - `data/processed/mongodb_ready_records.json`
@@ -119,17 +108,14 @@ Sortie:
 Script: `src/scripts/migrate_to_mongodb.py`
 
 ```bash
-# Insert depuis fichier local
-poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json
-
-# Upsert
-poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json --upsert
-
 # Insert depuis S3 processed (dernier fichier de la date)
 poetry run migrate-mongodb --input-s3-date 2026-02-18
 
 # Insert depuis S3 processed (dernier fichier global)
 poetry run migrate-mongodb --input-s3-latest
+
+# Upsert depuis fichier JSON genere par l'ETL
+poetry run migrate-mongodb --input ./data/processed/mongodb_ready_records.json --upsert
 ```
 
 Sortie:
@@ -194,27 +180,12 @@ Inclut les elements demandes:
 poetry run pytest -vv src/tests
 ```
 
-## 11) Docker (ECS/remote vs Mongo local)
+## 11) Docker (pipeline)
 
-### ECS/remote Mongo (mode default)
-Prerequis: `MONGODB_URI` dans `.env`.
+Prerequis: `MONGODB_URI` pointe vers le replica set MongoDB ECS.
 
 ```bash
 docker compose up --build
-```
-
-### Mongo local "clean" (sans profiles)
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
-```
-
-Test rapide de la collection via mongosh (local):
-```bash
-make mongo-shell
-# puis dans mongosh:
-# use forecast_2_0
-# db.weather_measurements.countDocuments()
 ```
 
 ### Credentials AWS (important)
@@ -233,18 +204,9 @@ make mongo-shell
 ## 12) Observabilité & planification
 
 ### Logs structurés et métriques EMF
-- `setup_logger` peut continuer à écrire un log texte local ou produire du JSON (`LOG_FORMAT=json`) avec `set_run_context` injecté pour `run_id`, `target_date`, `stage`, `dry_run`, etc. Tous les handlers alimentent `logs/` (et `stdout` pour CloudWatch via ECS).
+- `setup_logger` peut écrire un log texte ou produire du JSON (`LOG_FORMAT=json`) avec `set_run_context` injecté pour `run_id`, `target_date`, `stage`, `dry_run`, etc. Tous les handlers alimentent `logs/` (et `stdout` pour CloudWatch via ECS).
 - Chaque exécution écrit `logs/pipeline_status.json`, `logs/quality_report_*.json`, `logs/migration_report_*.json` ainsi que les rapports de latence `logs/query_latency_report_*.json`. Utilise ces artefacts pour vérifier la fraîcheur, les rejets et la latence en post mortem.
 - Le helper `utils.monitoring.emit_pipeline_metrics` imprime une ligne JSON EMF sur `stdout` avec `Namespace=Forecast2Pipeline`, dimensions `env` + `cluster` (par défaut `ecs`), et métriques `duration_seconds`, `records_*`, `error_rate`, `run_success`. Configure un log group CloudWatch pour parser ces lignes et créer des métriques/alertes dans CloudWatch sans agent additionnel.
-
-### Cron local (fallback)
-- Le script `ops/cron-run-pipeline.sh` définit `TARGET_DATE` sur la veille UTC (ou prend un argument), source le `.env`, génère un `RUN_ID`, puis lance `docker compose run --rm pipeline` avec `--date`, ce qui rend la planification portable sur n’importe quel hôte Linux.
-- Exemples de crontab (ajuster le chemin) :
-  ```
-  # tous les jours à 05:00 UTC
-  0 5 * * * /bin/bash /path/to/forecast-2-0-pipeline/ops/cron-run-pipeline.sh >> /path/to/forecast-2-0-pipeline/logs/cron.log 2>&1
-  ```
-- Tu peux passer une date spécifique : `ops/cron-run-pipeline.sh 2026-02-12`. Le log `cron.log` capture la date exécutée, le `RUN_ID` utilisé et les sorties `loguru`.
 
 ### Planification hebdomadaire ECS (production actuelle)
 
@@ -421,7 +383,7 @@ Si le document apparait aussi sur un secondary, la replication fonctionne.
 
 ## 14) Lancer le pipeline (pas a pas)
 
-### A. Lancer en local avec Poetry
+### A. Lancer avec Poetry (AWS)
 
 1. Preparer l'env:
 ```bash
@@ -430,14 +392,13 @@ cp env.example .env
 poetry install
 ```
 
-Exemple minimal pour MongoDB local (mode Docker local):
+Exemple minimal:
 ```env
-MONGODB_URI=mongodb://forecast_app:forecast_app_password@127.0.0.1:27018/forecast_2_0?authSource=forecast_2_0
+MONGODB_URI=mongodb://mongo-1.mongo.internal:27017,mongo-2.mongo.internal:27017,mongo-3.mongo.internal:27017/forecast_2_0?replicaSet=rs0
 ```
 
 Important:
-- Le `docker-compose.local.yml` expose MongoDB local sur `127.0.0.1:27018` pour eviter les conflits avec un `mongod` local deja present sur `27017`.
-- Dans ce cas, stoppe ce service local ou lance plutot le pipeline dans le conteneur `pipeline` (section B ci-dessous), qui utilise l'host `mongo` sans conflit de port.
+- Cette URI doit etre resolvable depuis l'environnement d'execution (tache ECS ou machine dans le VPC).
 
 2. Executer le pipeline (date explicite):
 ```bash
@@ -457,12 +418,12 @@ Note:
 
 1. Construire l'image:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml build
+docker compose build
 ```
 
 2. Run one-shot:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml run --rm pipeline --date 2026-02-18 --log-level INFO
+docker compose run --rm pipeline --date 2026-02-18 --log-level INFO
 ```
 
 3. Verifier:
@@ -472,16 +433,16 @@ cat logs/pipeline_status.json
 
 ### C. Lancer en one-shot sur ECS
 
-Le task definition actif pour la migration ECS est `forecast-pipeline-ecs:5`.
-Cette revision execute `scripts.migrate_to_mongodb --input-s3-latest` avec une URI MongoDB authentifiee.
+Le task definition actif est `forecast-pipeline-ecs:5`.
 
-Commande type:
+Commande one-shot (lance + attend la fin + affiche le resultat):
 ```bash
 REGION="eu-west-1"
 CLUSTER="forecast-prod-mongo-cluster"
 TASK_DEF="forecast-pipeline-ecs:5"
 SUBNETS="subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822"
 SG="sg-062056db10833656d"
+LOG_GROUP="/ecs/forecast-pipeline-ecs"
 
 TASK_ARN=$(aws ecs run-task \
   --cluster "$CLUSTER" \
@@ -492,16 +453,16 @@ TASK_ARN=$(aws ecs run-task \
   --query 'tasks[0].taskArn' --output text)
 
 echo "$TASK_ARN"
-```
 
-Suivi jusqu'a fin:
-```bash
+aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN" --region "$REGION"
+
 aws ecs describe-tasks \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN" \
-  --region "$REGION" \
-  --query 'tasks[0].{lastStatus:lastStatus,exitCode:containers[0].exitCode,reason:containers[0].reason,stoppedReason:stoppedReason}' \
+  --cluster "$CLUSTER" --tasks "$TASK_ARN" --region "$REGION" \
+  --query 'tasks[0].{lastStatus:lastStatus,stopCode:stopCode,exitCode:containers[0].exitCode,reason:containers[0].reason,stoppedReason:stoppedReason,startedAt:startedAt,stoppedAt:stoppedAt}' \
   --output table
+
+TASK_ID="${TASK_ARN##*/}"
+aws logs tail "$LOG_GROUP" --since 30m --follow --region "$REGION" --filter-pattern "$TASK_ID"
 ```
 
 ### D. Verifier que les donnees sont chargees dans MongoDB ECS
@@ -528,7 +489,6 @@ poetry run migrate-mongodb --input-s3-latest --log-level INFO
 ```
 
 Important:
-- En local, `migrate-mongodb` vers `mongo-*.mongo.internal` ne fonctionne pas hors VPC AWS (DNS prive non resolvable).
 - Pour cette cible MongoDB ECS, lancer la migration depuis ECS (task definition `forecast-pipeline-ecs:5`) ou via une machine dans le VPC.
 
 Run migration S3->Mongo dans ECS:
@@ -545,6 +505,8 @@ aws ecs run-task \
 
 - Tache ECS bloquee en `PENDING`:
   verifier capacite Fargate disponible, subnet/SG, et relancer la tache.
+- `ResourceInitializationError` vers ECR (`GetAuthorizationToken ... i/o timeout`):
+  verifier que le SG des endpoints VPC `ecr.api` / `ecr.dkr` autorise `tcp/443` depuis `sg-062056db10833656d`.
 - `execute-command` echoue:
   verifier Session Manager plugin + `TASK_ARN` non vide.
 - `Authentication failed`:
