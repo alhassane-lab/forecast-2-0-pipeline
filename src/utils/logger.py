@@ -19,14 +19,18 @@ def setup_logger(
         log_file: Fichier de log optionnel (sinon `logs/pipeline_{date}.log`).
         console_level: Niveau console (sinon `level`).
         file_level: Niveau fichier (sinon `level`).
-        log_format: `plain` ou `json`. Par défaut, lit `LOG_FORMAT` env ou `json`.
+        log_format: `plain` ou `json`. Priorité:
+            1) argument `log_format`
+            2) variable d'env `LOG_FORMAT`
+            3) défaut auto: `plain` en TTY, sinon `json`
     """
     logger.remove()
 
     console_lvl = console_level or level
     file_lvl = file_level or level
 
-    format_choice = (log_format or os.getenv("LOG_FORMAT", "json")).lower()
+    default_format = "plain" if sys.stdout.isatty() else "json"
+    format_choice = (log_format or os.getenv("LOG_FORMAT", default_format)).lower()
     if format_choice not in {"plain", "json"}:
         format_choice = "json"
 

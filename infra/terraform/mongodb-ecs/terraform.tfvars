@@ -32,6 +32,20 @@ ebs_throughput  = 125
 
 kms_key_id = null
 
+enable_backups                    = true
+backup_schedule                   = "cron(0 3 ? * * *)"
+backup_start_window_minutes       = 60
+backup_completion_window_minutes  = 180
+backup_cold_storage_after_days    = 30
+backup_delete_after_days          = 180
+
+enable_monitoring                 = true
+alarm_notification_emails         = ["ali75009@gmail.com"]
+ecs_running_task_minimum          = 1
+ecs_cpu_high_threshold            = 85
+ecs_memory_high_threshold         = 85
+mongodb_error_log_alarm_threshold = 5
+
 tags = {
   Owner = "data-engineering"
 }

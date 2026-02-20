@@ -1,17 +1,30 @@
 flowchart TD
-    A([Debut pipeline]) --> B[Airbyte Sync JSON/Excel -> S3 Raw]
-    B --> C{Fichiers S3 disponibles ?}
-    C -- Non --> Z[Log erreur + arret]
-    C -- Oui --> D[Extraction InfoClimat + Wunderground]
-    D --> E[Transformation schema MongoDB]
-    E --> F[Validation + controles qualite]
-    F --> G{Enregistrement valide ?}
-    G -- Non --> H[Compter rejet + journaliser]
-    G -- Oui --> I[Ajouter au lot MongoDB-ready]
-    H --> J{Fin des enregistrements ?}
-    I --> J
-    J -- Non --> G
-    J -- Oui --> K[Migration MongoDB insert/upsert]
-    K --> L[CRUD verification + requete latence]
-    L --> M[Rapports: qualite + migration + latence]
-    M --> N([Fin pipeline])
+    subgraph RUNTIME[Pipeline runtime]
+        A([Debut pipeline]) --> B[Airbyte Sync JSON/Excel -> S3 Raw]
+        B --> C{Fichiers S3 disponibles ?}
+        C -- Non --> Z[Log erreur + arret]
+        C -- Oui --> D[Extraction InfoClimat + Wunderground]
+        D --> E[Transformation schema MongoDB]
+        E --> F[Validation]
+        F --> G{Enregistrement valide ?}
+        G -- Non --> H[Compter rejet + journaliser]
+        G -- Oui --> I[Ajouter au lot valide]
+        H --> J{Fin des enregistrements ?}
+        I --> J
+        J -- Non --> G
+        J -- Oui --> K[Enregistrer lot valide dans S3 processed]
+        K --> L[Charger MongoDB insert/upsert]
+        L --> M[Generer quality report + status pipeline]
+        M --> N([Fin pipeline])
+    end
+
+    subgraph MIGRATION[Migration offline optionnelle]
+        S3P[(S3 processed)] --> X[migrate_to_mongodb.py]
+        X --> Y[Rapport migration]
+    end
+
+    subgraph PLATFORM[Industrialisation et infra AWS]
+        P1[Docker build image MongoDB RS] --> P2[Push image ECR]
+        P2 --> P3[Deploy Terraform ECS MongoDB]
+        P3 --> P4[Replica set 3 noeuds: mongo-1 mongo-2 mongo-3]
+    end

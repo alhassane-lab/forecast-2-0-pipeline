@@ -444,3 +444,207 @@ resource "aws_ecs_service" "mongo" {
     aws_secretsmanager_secret_version.mongo_bootstrap
   ]
 }
+
+resource "aws_backup_vault" "mongodb" {
+  count = var.enable_backups ? 1 : 0
+
+  name        = "${local.name_prefix}-backup-vault"
+  kms_key_arn = var.kms_key_id
+  tags        = local.common_tags
+}
+
+resource "aws_iam_role" "backup" {
+  count = var.enable_backups ? 1 : 0
+
+  name = "${local.name_prefix}-backup-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "backup.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "backup_service" {
+  count = var.enable_backups ? 1 : 0
+
+  role       = aws_iam_role.backup[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+}
+
+resource "aws_iam_role_policy_attachment" "backup_restore" {
+  count = var.enable_backups ? 1 : 0
+
+  role       = aws_iam_role.backup[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores"
+}
+
+resource "aws_backup_plan" "mongodb" {
+  count = var.enable_backups ? 1 : 0
+
+  name = "${local.name_prefix}-backup-plan"
+
+  rule {
+    rule_name         = "daily-mongodb-ebs"
+    target_vault_name = aws_backup_vault.mongodb[0].name
+    schedule          = var.backup_schedule
+    start_window      = var.backup_start_window_minutes
+    completion_window = var.backup_completion_window_minutes
+
+    lifecycle {
+      cold_storage_after = var.backup_cold_storage_after_days
+      delete_after       = var.backup_delete_after_days
+    }
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_backup_selection" "mongodb_ebs_by_tag" {
+  count = var.enable_backups ? 1 : 0
+
+  iam_role_arn = aws_iam_role.backup[0].arn
+  name         = "${local.name_prefix}-ebs-selection"
+  plan_id      = aws_backup_plan.mongodb[0].id
+
+  resources = ["*"]
+
+  selection_tag {
+    type  = "STRINGEQUALS"
+    key   = "Component"
+    value = "mongodb-replica-set"
+  }
+
+  selection_tag {
+    type  = "STRINGEQUALS"
+    key   = "Project"
+    value = var.project_name
+  }
+
+  selection_tag {
+    type  = "STRINGEQUALS"
+    key   = "Environment"
+    value = var.environment
+  }
+}
+
+resource "aws_sns_topic" "mongodb_alerts" {
+  count = var.enable_monitoring ? 1 : 0
+
+  name = "${local.name_prefix}-alerts"
+  tags = local.common_tags
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  for_each = var.enable_monitoring ? toset(var.alarm_notification_emails) : toset([])
+
+  topic_arn = aws_sns_topic.mongodb_alerts[0].arn
+  protocol  = "email"
+  endpoint  = each.value
+}
+
+resource "aws_cloudwatch_log_metric_filter" "mongodb_error_events" {
+  count = var.enable_monitoring ? 1 : 0
+
+  name           = "${local.name_prefix}-error-events"
+  log_group_name = aws_cloudwatch_log_group.mongodb.name
+  pattern        = "{ ($.s = \"E\") || ($.s = \"F\") }"
+
+  metric_transformation {
+    name          = "${replace(local.name_prefix, "-", "_")}_mongo_error_events"
+    namespace     = "Forecast/MongoDB"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "mongo_running_tasks_low" {
+  for_each = var.enable_monitoring ? local.nodes : {}
+
+  alarm_name          = "${local.name_prefix}-${each.value.service_name}-running-low"
+  alarm_description   = "MongoDB ECS service has fewer running tasks than expected"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  period              = 60
+  metric_name         = "RunningTaskCount"
+  namespace           = "ECS/ContainerInsights"
+  statistic           = "Minimum"
+  threshold           = var.ecs_running_task_minimum
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.mongo.name
+    ServiceName = aws_ecs_service.mongo[each.key].name
+  }
+
+  alarm_actions = [aws_sns_topic.mongodb_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.mongodb_alerts[0].arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "mongo_cpu_high" {
+  for_each = var.enable_monitoring ? local.nodes : {}
+
+  alarm_name          = "${local.name_prefix}-${each.value.service_name}-cpu-high"
+  alarm_description   = "MongoDB ECS service CPU utilization is high"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 5
+  period              = 60
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  statistic           = "Average"
+  threshold           = var.ecs_cpu_high_threshold
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.mongo.name
+    ServiceName = aws_ecs_service.mongo[each.key].name
+  }
+
+  alarm_actions = [aws_sns_topic.mongodb_alerts[0].arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "mongo_memory_high" {
+  for_each = var.enable_monitoring ? local.nodes : {}
+
+  alarm_name          = "${local.name_prefix}-${each.value.service_name}-memory-high"
+  alarm_description   = "MongoDB ECS service memory utilization is high"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 5
+  period              = 60
+  metric_name         = "MemoryUtilization"
+  namespace           = "AWS/ECS"
+  statistic           = "Average"
+  threshold           = var.ecs_memory_high_threshold
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.mongo.name
+    ServiceName = aws_ecs_service.mongo[each.key].name
+  }
+
+  alarm_actions = [aws_sns_topic.mongodb_alerts[0].arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "mongo_error_logs" {
+  count = var.enable_monitoring ? 1 : 0
+
+  alarm_name          = "${local.name_prefix}-error-logs"
+  alarm_description   = "MongoDB error/fatal logs detected"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  period              = 300
+  metric_name         = aws_cloudwatch_log_metric_filter.mongodb_error_events[0].metric_transformation[0].name
+  namespace           = "Forecast/MongoDB"
+  statistic           = "Sum"
+  threshold           = var.mongodb_error_log_alarm_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.mongodb_alerts[0].arn]
+}

@@ -86,14 +86,17 @@ Script: `src/scripts/transform_to_mongodb.py`
 
 ```bash
 # Mode S3
-poetry run transform-mongodb --source-mode s3 --date 2026-02-12
+poetry run transform-mongodb --source-mode s3 --date 2026-02-18
 
 # Mode local (debug)
 poetry run transform-mongodb \
   --source-mode local \
-  --infoclimat-file ./data/raw/infoclimat.json \
-  --wunderground-file ./data/raw/wunderground.json
+  --infoclimat-file /path/to/infoclimat.jsonl \
+  --wunderground-file /path/to/wunderground.jsonl
 ```
+
+Important:
+- En mode `local`, les fichiers passes en argument doivent exister (le dossier `data/raw/` ne contient pas d'exemple par defaut, uniquement `.gitkeep`).
 
 Sortie:
 - `data/processed/mongodb_ready_records.json`
@@ -137,7 +140,7 @@ Operations executees:
 Script: `src/scripts/query_latency_report.py`
 
 ```bash
-poetry run latency-report --station-id ILAMAD25 --date 2026-02-12 --iterations 10
+poetry run latency-report --station-id ILAMAD25 --date 2026-02-18 --iterations 10
 ```
 
 Sortie:
@@ -175,7 +178,7 @@ Inclut les elements demandes:
 
 ## 10) Tests
 ```bash
-pytest -vv src/tests
+poetry run pytest -vv src/tests
 ```
 
 ## 11) Docker (ECS/remote vs Mongo local)
@@ -236,12 +239,12 @@ Important:
 - Le schedule hebdomadaire n'est pas defini dans un fichier du repo.
 - Il est stocke dans AWS EventBridge (ressource distante), regle `forecast-pipeline-weekly`.
 
-Configuration active (mise a jour le 2026-02-18):
+Configuration active (mise a jour le 2026-02-19):
 - Rule: `forecast-pipeline-weekly`
 - Schedule expression: `cron(0 22 ? * WED *)`
 - Timezone effective EventBridge Rule: UTC
 - Cluster cible: `forecast-prod-mongo-cluster`
-- Task definition cible: `forecast-pipeline-ecs:3` (sans auth MongoDB, `MONGODB_URI` en env)
+- Task definition cible: `forecast-pipeline-ecs:5` (auth MongoDB active)
 - Network: subnets `subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822`, SG `sg-062056db10833656d`
 
 Verifier la regle:
@@ -283,7 +286,7 @@ Exemple `target.json`:
     "Arn": "arn:aws:ecs:eu-west-1:052443862943:cluster/forecast-prod-mongo-cluster",
     "RoleArn": "arn:aws:iam::052443862943:role/ecsEventsRole-forecast-pipeline",
     "EcsParameters": {
-      "TaskDefinitionArn": "arn:aws:ecs:eu-west-1:052443862943:task-definition/forecast-pipeline-ecs:3",
+      "TaskDefinitionArn": "arn:aws:ecs:eu-west-1:052443862943:task-definition/forecast-pipeline-ecs:5",
       "TaskCount": 1,
       "LaunchType": "FARGATE",
       "NetworkConfiguration": {
@@ -341,6 +344,34 @@ aws ecs execute-command \
   --command 'mongosh "mongodb://mongo-1.mongo.internal:27017,mongo-2.mongo.internal:27017,mongo-3.mongo.internal:27017/admin?replicaSet=rs0"'
 ```
 
+Version authentifiée (recommandée):
+```bash
+REGION="eu-west-1"
+CLUSTER="forecast-prod-mongo-cluster"
+SERVICE="forecast-prod-mongo-mongo-2"
+
+TASK_ARN="$(aws ecs list-tasks \
+  --cluster "$CLUSTER" \
+  --service-name "$SERVICE" \
+  --desired-status RUNNING \
+  --region "$REGION" \
+  --query 'taskArns[0]' \
+  --output text)"
+
+ROOT_PASSWORD="$(aws secretsmanager get-secret-value \
+    --secret-id arn:aws:secretsmanager:eu-west-1:052443862943:secret:forecast-prod-mongo-bootstrap-20260219081927288300000002-7uCxA0 \
+    --region eu-west-1 \
+    --query SecretString --output text | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["root_password"])')"
+
+aws ecs execute-command \
+  --cluster "$CLUSTER" \
+  --task "$TASK_ARN" \
+  --container mongodb \
+  --interactive \
+  --region "$REGION" \
+  --command "mongosh \"mongodb://admin:${ROOT_PASSWORD}@mongo-1.mongo.internal:27017,mongo-2.mongo.internal:27017,mongo-3.mongo.internal:27017/admin?replicaSet=rs0&authSource=admin\""
+```
+
 Important:
 - Si `TASK_ARN` vaut `None`, la commande `execute-command` echoue avec `Invalid identifier`.
 - Ne pas mettre 2 commandes sur la meme ligne sans separateur `;` ou `&&`.
@@ -386,6 +417,15 @@ cp env.example .env
 poetry install
 ```
 
+Exemple minimal pour MongoDB local (mode Docker local):
+```env
+MONGODB_URI=mongodb://forecast_app:forecast_app_password@127.0.0.1:27018/forecast_2_0?authSource=forecast_2_0
+```
+
+Important:
+- Le `docker-compose.local.yml` expose MongoDB local sur `127.0.0.1:27018` pour eviter les conflits avec un `mongod` local deja present sur `27017`.
+- Dans ce cas, stoppe ce service local ou lance plutot le pipeline dans le conteneur `pipeline` (section B ci-dessous), qui utilise l'host `mongo` sans conflit de port.
+
 2. Executer le pipeline (date explicite):
 ```bash
 poetry run forecast-pipeline --date 2026-02-18 --log-level INFO
@@ -404,12 +444,12 @@ Note:
 
 1. Construire l'image:
 ```bash
-docker compose build
+docker compose -f docker-compose.yml -f docker-compose.local.yml build
 ```
 
 2. Run one-shot:
 ```bash
-docker compose run --rm pipeline --date 2026-02-18 --log-level INFO
+docker compose -f docker-compose.yml -f docker-compose.local.yml run --rm pipeline --date 2026-02-18 --log-level INFO
 ```
 
 3. Verifier:
@@ -419,14 +459,14 @@ cat logs/pipeline_status.json
 
 ### C. Lancer en one-shot sur ECS
 
-Le task definition pipeline actif est `forecast-pipeline-ecs:3` (sans auth MongoDB, `MONGODB_URI` injecte en env dans la task definition).
-Etat actuel du cluster MongoDB de ce projet: mode pre-auth (pas d'identifiant dans l'URI).
+Le task definition actif pour la migration ECS est `forecast-pipeline-ecs:5`.
+Cette revision execute `scripts.migrate_to_mongodb --input-s3-latest` avec une URI MongoDB authentifiee.
 
 Commande type:
 ```bash
 REGION="eu-west-1"
 CLUSTER="forecast-prod-mongo-cluster"
-TASK_DEF="forecast-pipeline-ecs:3"
+TASK_DEF="forecast-pipeline-ecs:5"
 SUBNETS="subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822"
 SG="sg-062056db10833656d"
 
@@ -435,15 +475,11 @@ TASK_ARN=$(aws ecs run-task \
   --launch-type FARGATE \
   --task-definition "$TASK_DEF" \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-  --overrides '{"containerOverrides":[{"name":"forecast-pipeline","command":["--date","2026-02-18","--log-level","INFO"]}]}' \
   --region "$REGION" \
   --query 'tasks[0].taskArn' --output text)
 
 echo "$TASK_ARN"
 ```
-
-Si vous reactivez l'auth MongoDB plus tard, mettez a jour la task definition pour injecter:
-`mongodb://admin:<password>@mongo-1.mongo.internal:27017,mongo-2.mongo.internal:27017,mongo-3.mongo.internal:27017/forecast_2_0?replicaSet=rs0&authSource=admin`
 
 Suivi jusqu'a fin:
 ```bash
@@ -480,14 +516,14 @@ poetry run migrate-mongodb --input-s3-latest --log-level INFO
 
 Important:
 - En local, `migrate-mongodb` vers `mongo-*.mongo.internal` ne fonctionne pas hors VPC AWS (DNS prive non resolvable).
-- Pour cette cible MongoDB ECS, lancer la migration depuis ECS (task definition `forecast-pipeline-ecs:4`) ou via une machine dans le VPC.
+- Pour cette cible MongoDB ECS, lancer la migration depuis ECS (task definition `forecast-pipeline-ecs:5`) ou via une machine dans le VPC.
 
 Run migration S3->Mongo dans ECS:
 ```bash
 aws ecs run-task \
   --cluster forecast-prod-mongo-cluster \
   --launch-type FARGATE \
-  --task-definition forecast-pipeline-ecs:4 \
+  --task-definition forecast-pipeline-ecs:5 \
   --network-configuration "awsvpcConfiguration={subnets=[subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822],securityGroups=[sg-062056db10833656d],assignPublicIp=ENABLED}" \
   --region eu-west-1
 ```

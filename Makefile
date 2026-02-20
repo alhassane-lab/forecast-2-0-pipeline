@@ -1,6 +1,9 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up-ecs up-local down-local logs test mongo-shell mongo-shell-root
+.PHONY: help up-ecs up-local down-local logs test run-pipeline run-pipeline-dry mongo-shell mongo-shell-root
+
+DATE ?=
+LOG_LEVEL ?= INFO
 
 help:
 	@printf "%s\n" \
@@ -10,6 +13,8 @@ help:
 		"  down-local       Stop local stack and remove volumes" \
 		"  logs             Follow docker compose logs" \
 		"  test             Run pytest" \
+		"  run-pipeline     Run ETL pipeline (use DATE=YYYY-MM-DD LOG_LEVEL=INFO)" \
+		"  run-pipeline-dry Run ETL pipeline in dry-run mode (no Mongo writes)" \
 		"  mongo-shell      Open mongosh as app user (uses env vars/.env)" \
 		"  mongo-shell-root Open mongosh as root user (uses env vars/.env)"
 
@@ -27,6 +32,12 @@ logs:
 
 test:
 	poetry run pytest -vv src/tests
+
+run-pipeline:
+	poetry run forecast-pipeline $(if $(DATE),--date $(DATE),) --log-level $(LOG_LEVEL)
+
+run-pipeline-dry:
+	poetry run forecast-pipeline $(if $(DATE),--date $(DATE),) --dry-run --log-level $(LOG_LEVEL)
 
 # App user (readWrite on $MONGO_DB). Override via .env if needed.
 mongo-shell:

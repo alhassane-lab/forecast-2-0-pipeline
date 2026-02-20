@@ -241,6 +241,15 @@ class Forecast2Pipeline:
 
     # -----------------------------------------------------------------------
 
+    def _refresh_timing_stats(self, run_start_ts: float) -> float:
+        """Met à jour les métriques temporelles d'exécution et retourne la durée."""
+        duration = time.time() - run_start_ts
+        self.stats["end_time"] = datetime.utcnow()
+        self.stats["duration_seconds"] = duration
+        return duration
+
+    # -----------------------------------------------------------------------
+
     def write_status_file(self, status: str, duration: float):
         """Ecrit un fichier JSON de statut pour suivi externe."""
         status_data = {
@@ -308,6 +317,7 @@ class Forecast2Pipeline:
 
             set_run_context(stage="report")
             # 6️⃣ REPORT
+            self._refresh_timing_stats(start_time)
             self.generate_quality_report(validated_data)
 
             logger.success("PIPELINE TERMINÉ AVEC SUCCÈS")
@@ -318,9 +328,7 @@ class Forecast2Pipeline:
             raise
 
         finally:
-            duration = time.time() - start_time
-            self.stats["end_time"] = datetime.utcnow()
-            self.stats["duration_seconds"] = duration
+            duration = self._refresh_timing_stats(start_time)
             self.stats["status"] = status
             self.write_status_file(status, duration)
             logger.info(f"Durée totale: {duration:.2f}s")

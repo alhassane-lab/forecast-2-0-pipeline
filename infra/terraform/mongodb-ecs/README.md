@@ -6,6 +6,8 @@ This stack deploys a private MongoDB replica set on Amazon ECS with:
 - 1 EBS volume per node via ECS managed EBS volumes
 - private DNS discovery using AWS Cloud Map
 - no public IP assigned to tasks
+- AWS Backup plan for MongoDB EBS volumes
+- CloudWatch alarms + SNS notifications for service health and MongoDB errors
 
 ## Architecture
 
@@ -15,6 +17,8 @@ This stack deploys a private MongoDB replica set on Amazon ECS with:
 - `aws_service_discovery_private_dns_namespace`: private DNS namespace (`mongo.internal` by default).
 - `aws_security_group`: traffic locked to Mongo port and approved source SG/CIDR.
 - `aws_secretsmanager_secret`: stores root password and replica set key.
+- `aws_backup_plan` + `aws_backup_selection`: scheduled backups for tagged MongoDB EBS volumes.
+- `aws_cloudwatch_metric_alarm` + `aws_sns_topic`: alerting on ECS running tasks, CPU/memory and MongoDB error logs.
 
 ## Prerequisites
 
@@ -37,6 +41,7 @@ Required vars to check:
 - `public_subnet_id`: subnet public (route Internet Gateway) for NAT.
 - `private_subnet_ids`: private subnets used for AZ mapping.
 - `mongo_image`: ECR image URI built with `ops/aws/build_push_mongodb_rs_image.sh`.
+- `alarm_notification_emails`: optional email list for SNS alarms.
 
 2. Configure remote state backend (S3 + optional DynamoDB lock):
 ```bash
@@ -59,6 +64,20 @@ bash ops/aws/deploy_mongodb_rs_terraform.sh
 ```bash
 terraform -chdir=infra/terraform/mongodb-ecs output
 ```
+
+## Backup and Monitoring
+
+- Backup is enabled by default (`enable_backups = true`):
+  - schedule: `backup_schedule` (default daily at 03:00 UTC)
+  - retention: `backup_delete_after_days`
+  - cold tier: `backup_cold_storage_after_days`
+- Monitoring is enabled by default (`enable_monitoring = true`):
+  - ECS service running task count alarm
+  - ECS CPU and memory high alarms
+  - MongoDB error/fatal log alarm from CloudWatch logs
+  - notifications via SNS topic output `alarm_topic_arn`
+
+If you set `alarm_notification_emails`, AWS sends subscription confirmation emails that must be accepted before notifications are delivered.
 
 ## Verify replica set
 

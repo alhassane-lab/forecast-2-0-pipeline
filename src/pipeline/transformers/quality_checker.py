@@ -76,6 +76,7 @@ class QualityChecker:
             "execution_info": {
                 "start_time": stats.get("start_time"),
                 "end_time": stats.get("end_time"),
+                "duration_seconds": stats.get("duration_seconds"),
                 "timestamp": datetime.utcnow().isoformat()
             },
             "summary": {

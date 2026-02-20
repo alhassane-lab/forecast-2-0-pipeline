@@ -135,3 +135,75 @@ variable "mongo_image" {
   description = "MongoDB container image used by ECS tasks"
   type        = string
 }
+
+variable "enable_backups" {
+  description = "Enable AWS Backup plan for MongoDB volumes"
+  type        = bool
+  default     = true
+}
+
+variable "backup_schedule" {
+  description = "Backup schedule expression (AWS cron syntax)"
+  type        = string
+  default     = "cron(0 3 ? * * *)"
+}
+
+variable "backup_start_window_minutes" {
+  description = "Backup start window in minutes"
+  type        = number
+  default     = 60
+}
+
+variable "backup_completion_window_minutes" {
+  description = "Backup completion window in minutes"
+  type        = number
+  default     = 180
+}
+
+variable "backup_cold_storage_after_days" {
+  description = "Days before moving backups to cold storage"
+  type        = number
+  default     = 30
+}
+
+variable "backup_delete_after_days" {
+  description = "Days before deleting backups"
+  type        = number
+  default     = 180
+}
+
+variable "enable_monitoring" {
+  description = "Enable CloudWatch alarms and SNS notifications"
+  type        = bool
+  default     = true
+}
+
+variable "alarm_notification_emails" {
+  description = "Email addresses subscribed to MongoDB alarms"
+  type        = list(string)
+  default     = []
+}
+
+variable "ecs_cpu_high_threshold" {
+  description = "CPU utilization threshold for ECS service high-usage alarm"
+  type        = number
+  default     = 85
+}
+
+variable "ecs_memory_high_threshold" {
+  description = "Memory utilization threshold for ECS service high-usage alarm"
+  type        = number
+  default     = 85
+}
+
+variable "ecs_running_task_minimum" {
+  description = "Minimum expected running task count per MongoDB ECS service"
+  type        = number
+  default     = 1
+}
+
+variable "mongodb_error_log_alarm_threshold" {
+  description = "Number of MongoDB error/fatal log events per 5 min before alarm"
+  type        = number
+  default     = 5
+}
