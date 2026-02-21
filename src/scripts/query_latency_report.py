@@ -29,7 +29,7 @@ def _load_config(config_path: str) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Query latency reporter")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
-    parser.add_argument("--station-id", required=True, help="Ex: ILAMAD25")
+    parser.add_argument("--station-id", help="Optionnel: filtre station (ex: ILAMAD25)")
     parser.add_argument("--date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--log-level", default="INFO")
@@ -53,13 +53,14 @@ def main() -> None:
     date_end_space = target_day.strftime("%Y-%m-%d 23:59:59")
 
     query = {
-        "station.id": args.station_id,
         "$or": [
             {"timestamp": {"$gte": target_day, "$lt": next_day}},
             {"timestamp": {"$gte": date_start_iso, "$lte": date_end_iso}},
             {"timestamp": {"$gte": date_start_space, "$lte": date_end_space}},
         ],
     }
+    if args.station_id:
+        query["station.id"] = args.station_id
 
     durations = []
     matched = 0
@@ -72,6 +73,7 @@ def main() -> None:
 
     report = {
         "query": query,
+        "scope": "station" if args.station_id else "global",
         "iterations": len(durations),
         "matched_rows": matched,
         "latency_ms": {

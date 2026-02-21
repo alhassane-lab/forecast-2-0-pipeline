@@ -262,24 +262,10 @@ class Forecast2Pipeline:
                 continue
         return datetime(fallback.year, fallback.month, fallback.day)
 
-    def _infer_latency_station_id(self, records: List[Dict], fallback: str = "ILAMAD25") -> str:
-        """Infere une station existante dans les donnees validees."""
-        counts: Dict[str, int] = {}
-        for rec in records:
-            sid = rec.get("station", {}).get("id")
-            if not sid:
-                continue
-            counts[sid] = counts.get(sid, 0) + 1
-        if not counts:
-            return fallback
-        return max(counts.items(), key=lambda kv: kv[1])[0]
-
     def generate_latency_report(
         self,
         target_date: datetime,
-        station_id: Optional[str] = None,
         iterations: int = 5,
-        records: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Mesure la latence de requete MongoDB et persiste un rapport JSON."""
         if self.mongodb_loader.collection is None:
@@ -294,9 +280,7 @@ class Forecast2Pipeline:
         date_start_space = target_day.strftime("%Y-%m-%d 00:00:00")
         date_end_space = target_day.strftime("%Y-%m-%d 23:59:59")
 
-        chosen_station_id = station_id or self._infer_latency_station_id(records or [])
         query = {
-            "station.id": chosen_station_id,
             "$or": [
                 {"timestamp": {"$gte": target_day, "$lt": next_day}},
                 {"timestamp": {"$gte": date_start_iso, "$lte": date_end_iso}},
@@ -306,29 +290,15 @@ class Forecast2Pipeline:
 
         durations_ms: List[float] = []
         matched_rows = 0
-        fallback_without_station = False
         for _ in range(max(1, iterations)):
             start = time.perf_counter()
             rows = list(self.mongodb_loader.collection.find(query).limit(10000))
             durations_ms.append((time.perf_counter() - start) * 1000)
             matched_rows = len(rows)
 
-        if matched_rows == 0:
-            fallback_query = {
-                "$or": query["$or"],
-            }
-            durations_ms = []
-            for _ in range(max(1, iterations)):
-                start = time.perf_counter()
-                rows = list(self.mongodb_loader.collection.find(fallback_query).limit(10000))
-                durations_ms.append((time.perf_counter() - start) * 1000)
-                matched_rows = len(rows)
-            fallback_without_station = True
-
         report = {
             "query": query,
-            "station_id_used": chosen_station_id,
-            "fallback_without_station": fallback_without_station,
+            "scope": "global",
             "iterations": len(durations_ms),
             "matched_rows": matched_rows,
             "latency_ms": {
@@ -503,9 +473,7 @@ class Forecast2Pipeline:
             try:
                 latency_report = self.generate_latency_report(
                     target_date=self._infer_latency_target_date(validated_data, effective_date),
-                    station_id=None,
                     iterations=5,
-                    records=validated_data,
                 )
             except Exception as latency_err:
                 logger.warning(f"Generation query_latency_report echouee: {latency_err}")
