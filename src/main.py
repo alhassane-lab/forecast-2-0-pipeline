@@ -236,6 +236,7 @@ class Forecast2Pipeline:
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, default=str)
 
+        self.stats["quality_report_path"] = str(report_path)
         logger.info(f"Rapport qualité sauvegardé: {report_path}")
         return report
 
@@ -272,7 +273,42 @@ class Forecast2Pipeline:
         with open(status_path, "w", encoding="utf-8") as f:
             json.dump(status_data, f, indent=4)
 
+        self.stats["status_path"] = str(status_path)
         logger.info(f"Status pipeline écrit: {status_path}")
+        return status_data
+
+    # -----------------------------------------------------------------------
+
+    def publish_reports_to_s3(
+        self,
+        target_date: datetime,
+        status_data: Dict[str, Any],
+        quality_report: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Publie les artefacts d'execution (status/quality) vers S3 reports."""
+        status_s3 = self.s3_loader.save_report_json(
+            report_type="pipeline_status",
+            payload=status_data,
+            run_date=target_date,
+            file_stem="pipeline_status",
+        )
+        logger.info(json.dumps({
+            "event": "report_published",
+            "report_type": "pipeline_status",
+            "s3_path": status_s3,
+        }))
+
+        if quality_report is not None:
+            quality_s3 = self.s3_loader.save_report_json(
+                report_type="quality_report",
+                payload=quality_report,
+                run_date=target_date,
+            )
+            logger.info(json.dumps({
+                "event": "report_published",
+                "report_type": "quality_report",
+                "s3_path": quality_s3,
+            }))
 
     # -----------------------------------------------------------------------
 
@@ -288,6 +324,7 @@ class Forecast2Pipeline:
 
         start_time = time.time()
         status = "SUCCESS"
+        quality_report: Optional[Dict[str, Any]] = None
 
         effective_date = target_date or (datetime.utcnow() - timedelta(days=1))
         try:
@@ -318,7 +355,7 @@ class Forecast2Pipeline:
             set_run_context(stage="report")
             # 6️⃣ REPORT
             self._refresh_timing_stats(start_time)
-            self.generate_quality_report(validated_data)
+            quality_report = self.generate_quality_report(validated_data)
 
             logger.success("PIPELINE TERMINÉ AVEC SUCCÈS")
 
@@ -330,7 +367,15 @@ class Forecast2Pipeline:
         finally:
             duration = self._refresh_timing_stats(start_time)
             self.stats["status"] = status
-            self.write_status_file(status, duration)
+            status_data = self.write_status_file(status, duration)
+            try:
+                self.publish_reports_to_s3(
+                    target_date=effective_date,
+                    status_data=status_data,
+                    quality_report=quality_report,
+                )
+            except Exception as report_err:
+                logger.error(f"Publication des rapports vers S3/CloudWatch échouée: {report_err}")
             logger.info(f"Durée totale: {duration:.2f}s")
 
         return self.stats

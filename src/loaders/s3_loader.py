@@ -31,6 +31,10 @@ class S3Loader:
         """Construit le prefix S3 de stockage processed."""
         return "processed/"
 
+    def _build_reports_prefix(self, run_date: Optional[datetime] = None) -> str:
+        """Construit le prefix S3 pour les rapports d'execution."""
+        return "logs/"
+
     def _build_filename(self, date: datetime) -> str:
         """Construit le nom de fichier avec la date dans le nom."""
         timestamp = datetime.utcnow().strftime("%H%M%S")
@@ -125,4 +129,32 @@ class S3Loader:
             return payload
         except Exception as e:
             logger.error(f"Erreur chargement S3 s3://{self.bucket}/{key}: {e}")
+            raise
+
+    def save_report_json(
+        self,
+        report_type: str,
+        payload: Dict,
+        run_date: Optional[datetime] = None,
+        file_stem: Optional[str] = None,
+    ) -> str:
+        """Sauvegarde un rapport JSON d'execution sous logs/."""
+        safe_type = re.sub(r"[^a-zA-Z0-9_-]+", "_", report_type).strip("_") or "report"
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        stem = file_stem or f"{safe_type}_{ts}"
+        key = f"{self._build_reports_prefix(run_date)}{stem}.json"
+
+        try:
+            body = json.dumps(payload, default=str, indent=2).encode("utf-8")
+            self.s3_client.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=body,
+                ContentType="application/json",
+            )
+            s3_path = f"s3://{self.bucket}/{key}"
+            logger.info(f"Rapport publie dans S3: {s3_path}")
+            return s3_path
+        except Exception as e:
+            logger.error(f"Erreur publication rapport S3 ({safe_type}): {e}")
             raise

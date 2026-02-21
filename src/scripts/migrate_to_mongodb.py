@@ -94,6 +94,7 @@ def main() -> None:
         records = _load_records(args.input)
 
     loader = MongoDBLoader(config=config, dry_run=args.dry_run)
+    started_at = datetime.utcnow()
     start = time.perf_counter()
 
     if args.upsert:
@@ -102,12 +103,14 @@ def main() -> None:
         loaded = loader.bulk_insert(records)
 
     elapsed = time.perf_counter() - start
+    ended_at = datetime.utcnow()
 
     rejected = max(0, len(records) - loaded)
     error_rate = (rejected / len(records)) if records else 0.0
 
     stats = {
-        "start_time": datetime.utcnow(),
+        "start_time": started_at,
+        "end_time": ended_at,
         "records_extracted": len(records),
         "records_transformed": len(records),
         "records_validated": len(records),
@@ -134,6 +137,17 @@ def main() -> None:
         "quality": quality_report,
     }
     migration_report_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    report_loader = S3Loader(config)
+    migration_s3_path = report_loader.save_report_json(
+        report_type="migration_report",
+        payload=payload,
+        run_date=ended_at,
+    )
+    logger.info(json.dumps({
+        "event": "report_published",
+        "report_type": "migration_report",
+        "s3_path": migration_s3_path,
+    }))
 
     logger.success(f"Migration terminee. Charges: {loaded}/{len(records)} | error_rate={error_rate:.2%}")
     logger.info(f"Rapport migration: {migration_report_path}")
