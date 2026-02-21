@@ -35,6 +35,19 @@ class S3Loader:
         """Construit le prefix S3 pour les rapports d'execution."""
         return "logs/"
 
+    def _resolve_report_subdir(self, report_type: str) -> str:
+        """Mappe un type de rapport vers son sous-dossier S3 dédié."""
+        normalized = (report_type or "").strip().lower()
+        if normalized.startswith("query_latency"):
+            return "query_latency"
+        if normalized.startswith("quality"):
+            return "quality"
+        if normalized.startswith("pipeline_status"):
+            return "pipeline_status"
+        if normalized.startswith("migration"):
+            return "migration"
+        return re.sub(r"[^a-zA-Z0-9_-]+", "_", normalized).strip("_") or "other"
+
     def _build_filename(self, date: datetime) -> str:
         """Construit le nom de fichier avec la date dans le nom."""
         timestamp = datetime.utcnow().strftime("%H%M%S")
@@ -138,11 +151,12 @@ class S3Loader:
         run_date: Optional[datetime] = None,
         file_stem: Optional[str] = None,
     ) -> str:
-        """Sauvegarde un rapport JSON d'execution sous logs/."""
+        """Sauvegarde un rapport JSON d'execution sous logs/<type>."""
         safe_type = re.sub(r"[^a-zA-Z0-9_-]+", "_", report_type).strip("_") or "report"
+        subdir = self._resolve_report_subdir(report_type)
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         stem = file_stem or f"{safe_type}_{ts}"
-        key = f"{self._build_reports_prefix(run_date)}{stem}.json"
+        key = f"{self._build_reports_prefix(run_date)}{subdir}/{stem}.json"
 
         try:
             body = json.dumps(payload, default=str, indent=2).encode("utf-8")
