@@ -465,6 +465,45 @@ TASK_ID="${TASK_ARN##*/}"
 aws logs tail "$LOG_GROUP" --since 30m --follow --region "$REGION" --filter-pattern "$TASK_ID"
 ```
 
+### Cbis. Rebuild image, push ECR, puis lancer migration ECS
+
+```bash
+REGION="eu-west-1"
+ACCOUNT_ID="052443862943"
+REPO="forecast-2-0-pipeline"
+IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
+CLUSTER="forecast-prod-mongo-cluster"
+TASK_DEF="forecast-pipeline-ecs:5"
+SUBNETS="subnet-01ec17ee34fdbcbf6,subnet-0403a7c24fb649b8c,subnet-0631d4f7da0f7a822"
+SG="sg-062056db10833656d"
+LOG_GROUP="/ecs/forecast-pipeline"
+
+# 1) Build amd64 + push image
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+
+docker buildx build --platform linux/amd64 -t "$IMAGE_URI" --push .
+
+# 2) Lancer la migration ECS (commande par défaut de la task definition)
+TASK_ARN=$(aws ecs run-task \
+  --cluster "$CLUSTER" \
+  --launch-type FARGATE \
+  --task-definition "$TASK_DEF" \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+  --region "$REGION" \
+  --query 'tasks[0].taskArn' --output text)
+
+echo "$TASK_ARN"
+aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN" --region "$REGION"
+aws ecs describe-tasks \
+  --cluster "$CLUSTER" --tasks "$TASK_ARN" --region "$REGION" \
+  --query 'tasks[0].{lastStatus:lastStatus,stopCode:stopCode,exitCode:containers[0].exitCode,stoppedReason:stoppedReason,startedAt:startedAt,stoppedAt:stoppedAt}' \
+  --output table
+
+# 3) Vérifier le report migration publié dans S3
+aws s3 ls s3://greenandcoop-processed-data/logs/migration/ | tail -n 5
+```
+
 ### D. Verifier que les donnees sont chargees dans MongoDB ECS
 
 Depuis `mongosh` (via section 13):
