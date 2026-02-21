@@ -242,6 +242,67 @@ class Forecast2Pipeline:
 
     # -----------------------------------------------------------------------
 
+    def generate_latency_report(
+        self,
+        target_date: datetime,
+        station_id: str = "ILAMAD25",
+        iterations: int = 5,
+    ) -> Optional[Dict[str, Any]]:
+        """Mesure la latence de requete MongoDB et persiste un rapport JSON."""
+        if self.mongodb_loader.collection is None:
+            logger.warning("Latency report ignoré: collection MongoDB indisponible")
+            return None
+
+        target_day = datetime(target_date.year, target_date.month, target_date.day)
+        next_day = target_day + timedelta(days=1)
+
+        date_start_iso = target_day.strftime("%Y-%m-%dT00:00:00")
+        date_end_iso = target_day.strftime("%Y-%m-%dT23:59:59")
+        date_start_space = target_day.strftime("%Y-%m-%d 00:00:00")
+        date_end_space = target_day.strftime("%Y-%m-%d 23:59:59")
+
+        query = {
+            "station.id": station_id,
+            "$or": [
+                {"timestamp": {"$gte": target_day, "$lt": next_day}},
+                {"timestamp": {"$gte": date_start_iso, "$lte": date_end_iso}},
+                {"timestamp": {"$gte": date_start_space, "$lte": date_end_space}},
+            ],
+        }
+
+        durations_ms: List[float] = []
+        matched_rows = 0
+        for _ in range(max(1, iterations)):
+            start = time.perf_counter()
+            rows = list(self.mongodb_loader.collection.find(query).limit(10000))
+            durations_ms.append((time.perf_counter() - start) * 1000)
+            matched_rows = len(rows)
+
+        report = {
+            "query": query,
+            "iterations": len(durations_ms),
+            "matched_rows": matched_rows,
+            "latency_ms": {
+                "min": round(min(durations_ms), 3),
+                "max": round(max(durations_ms), 3),
+                "avg": round(sum(durations_ms) / len(durations_ms), 3),
+            },
+            "generated_at": datetime.utcnow().isoformat(),
+        }
+
+        report_path = LOGS_DIR / f"query_latency_report_{datetime.utcnow():%Y%m%d_%H%M%S}.json"
+        report_path.parent.mkdir(exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, default=str)
+
+        self.stats["latency_report_path"] = str(report_path)
+        logger.info(
+            f"Latency avg={report['latency_ms']['avg']}ms | matched={matched_rows} | report={report_path}"
+        )
+        return report
+
+    # -----------------------------------------------------------------------
+
     def _refresh_timing_stats(self, run_start_ts: float) -> float:
         """Met à jour les métriques temporelles d'exécution et retourne la durée."""
         duration = time.time() - run_start_ts
@@ -284,8 +345,9 @@ class Forecast2Pipeline:
         target_date: datetime,
         status_data: Dict[str, Any],
         quality_report: Optional[Dict[str, Any]] = None,
+        latency_report: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Publie les artefacts d'execution (status/quality) vers S3 reports."""
+        """Publie les artefacts d'execution (status/quality/latency) vers S3 logs."""
         status_s3 = self.s3_loader.save_report_json(
             report_type="pipeline_status",
             payload=status_data,
@@ -310,6 +372,18 @@ class Forecast2Pipeline:
                 "s3_path": quality_s3,
             }))
 
+        if latency_report is not None:
+            latency_s3 = self.s3_loader.save_report_json(
+                report_type="query_latency_report",
+                payload=latency_report,
+                run_date=target_date,
+            )
+            logger.info(json.dumps({
+                "event": "report_published",
+                "report_type": "query_latency_report",
+                "s3_path": latency_s3,
+            }))
+
     # -----------------------------------------------------------------------
 
     def run(self, target_date: Optional[datetime] = None):
@@ -325,6 +399,7 @@ class Forecast2Pipeline:
         start_time = time.time()
         status = "SUCCESS"
         quality_report: Optional[Dict[str, Any]] = None
+        latency_report: Optional[Dict[str, Any]] = None
 
         effective_date = target_date or (datetime.utcnow() - timedelta(days=1))
         try:
@@ -356,6 +431,14 @@ class Forecast2Pipeline:
             # 6️⃣ REPORT
             self._refresh_timing_stats(start_time)
             quality_report = self.generate_quality_report(validated_data)
+            try:
+                latency_report = self.generate_latency_report(
+                    target_date=effective_date,
+                    station_id="ILAMAD25",
+                    iterations=5,
+                )
+            except Exception as latency_err:
+                logger.warning(f"Generation query_latency_report echouee: {latency_err}")
 
             logger.success("PIPELINE TERMINÉ AVEC SUCCÈS")
 
@@ -373,6 +456,7 @@ class Forecast2Pipeline:
                     target_date=effective_date,
                     status_data=status_data,
                     quality_report=quality_report,
+                    latency_report=latency_report,
                 )
             except Exception as report_err:
                 logger.error(f"Publication des rapports vers S3/CloudWatch échouée: {report_err}")
