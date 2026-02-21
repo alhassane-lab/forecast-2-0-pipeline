@@ -201,16 +201,22 @@ class Forecast2Pipeline:
             logger.warning("Aucune donnée à charger")
             return 0
 
-        count = self.mongodb_loader.bulk_insert(records)
+        insert_stats = self.mongodb_loader.bulk_insert_with_stats(records)
+        count = insert_stats["inserted_records"]
+        self.stats["duplicates_ignored"] = insert_stats.get("duplicates_ignored", 0)
+        self.stats["failed_records"] = insert_stats.get("failed_records", 0)
+
         if self.dry_run:
-            # bulk_insert() already logs "[DRY-RUN] ... auraient ete inseres".
             self.stats["records_loaded"] = 0
             self.stats["records_loaded_simulated"] = count
             logger.warning(f"[DRY-RUN] ✓ {count} documents auraient été chargés MongoDB")
             return 0
 
         self.stats["records_loaded"] = count
-        logger.success(f"✓ {count} documents chargés MongoDB")
+        logger.success(
+            f"✓ {count} documents chargés MongoDB "
+            f"(doublons={self.stats.get('duplicates_ignored', 0)}, erreurs={self.stats.get('failed_records', 0)})"
+        )
         return count
 
     # -----------------------------------------------------------------------
@@ -241,6 +247,20 @@ class Forecast2Pipeline:
         return report
 
     # -----------------------------------------------------------------------
+
+    def _infer_latency_target_date(self, records: List[Dict], fallback: datetime) -> datetime:
+        """Infere la date a requeter pour la latence depuis les donnees validees."""
+        for rec in records:
+            ts = rec.get("timestamp")
+            if ts is None:
+                continue
+            try:
+                text = str(ts).replace("Z", "+00:00")
+                dt = datetime.fromisoformat(text)
+                return datetime(dt.year, dt.month, dt.day)
+            except Exception:
+                continue
+        return datetime(fallback.year, fallback.month, fallback.day)
 
     def generate_latency_report(
         self,
@@ -314,6 +334,8 @@ class Forecast2Pipeline:
 
     def write_status_file(self, status: str, duration: float):
         """Ecrit un fichier JSON de statut pour suivi externe."""
+        ts = datetime.utcnow()
+        ts_token = ts.strftime("%Y%m%d_%H%M%S")
         status_data = {
             "status": status,
             "dry_run": bool(self.dry_run),
@@ -322,20 +344,27 @@ class Forecast2Pipeline:
             "processed_s3_path": self.stats.get("processed_s3_path"),
             "records_loaded": self.stats.get("records_loaded", 0),
             "records_loaded_simulated": self.stats.get("records_loaded_simulated", 0),
+            "duplicates_ignored": self.stats.get("duplicates_ignored", 0),
+            "failed_records": self.stats.get("failed_records", 0),
             "duration_seconds": duration,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": ts.isoformat(),
         }
 
         log_dir = LOGS_DIR
         log_dir.mkdir(exist_ok=True)
 
         status_path = log_dir / "pipeline_status.json"
+        versioned_status_path = log_dir / f"pipeline_status_{ts_token}.json"
 
         with open(status_path, "w", encoding="utf-8") as f:
             json.dump(status_data, f, indent=4)
+        with open(versioned_status_path, "w", encoding="utf-8") as f:
+            json.dump(status_data, f, indent=4)
 
         self.stats["status_path"] = str(status_path)
+        self.stats["status_versioned_path"] = str(versioned_status_path)
         logger.info(f"Status pipeline écrit: {status_path}")
+        logger.info(f"Status pipeline versionné: {versioned_status_path}")
         return status_data
 
     # -----------------------------------------------------------------------
@@ -358,6 +387,17 @@ class Forecast2Pipeline:
             "event": "report_published",
             "report_type": "pipeline_status",
             "s3_path": status_s3,
+        }))
+        status_versioned_s3 = self.s3_loader.save_report_json(
+            report_type="pipeline_status",
+            payload=status_data,
+            run_date=target_date,
+            file_stem=f"pipeline_status_{datetime.utcnow():%Y%m%d_%H%M%S}",
+        )
+        logger.info(json.dumps({
+            "event": "report_published",
+            "report_type": "pipeline_status_versioned",
+            "s3_path": status_versioned_s3,
         }))
 
         if quality_report is not None:
@@ -433,7 +473,7 @@ class Forecast2Pipeline:
             quality_report = self.generate_quality_report(validated_data)
             try:
                 latency_report = self.generate_latency_report(
-                    target_date=effective_date,
+                    target_date=self._infer_latency_target_date(validated_data, effective_date),
                     station_id="ILAMAD25",
                     iterations=5,
                 )

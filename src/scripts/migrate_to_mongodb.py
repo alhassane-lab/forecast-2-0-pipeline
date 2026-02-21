@@ -98,15 +98,20 @@ def main() -> None:
     start = time.perf_counter()
 
     if args.upsert:
-        loaded = loader.upsert_records(records)
+        upsert_stats = loader.upsert_records_with_stats(records)
+        loaded = upsert_stats["upserted_records"]
+        duplicates_ignored = 0
+        failed_records = upsert_stats["failed_records"]
     else:
-        loaded = loader.bulk_insert(records)
+        insert_stats = loader.bulk_insert_with_stats(records)
+        loaded = insert_stats["inserted_records"]
+        duplicates_ignored = insert_stats["duplicates_ignored"]
+        failed_records = insert_stats["failed_records"]
 
     elapsed = time.perf_counter() - start
     ended_at = datetime.utcnow()
 
-    rejected = max(0, len(records) - loaded)
-    error_rate = (rejected / len(records)) if records else 0.0
+    error_rate = (failed_records / len(records)) if records else 0.0
 
     stats = {
         "start_time": started_at,
@@ -115,7 +120,7 @@ def main() -> None:
         "records_transformed": len(records),
         "records_validated": len(records),
         "records_loaded": loaded,
-        "records_rejected": rejected,
+        "records_rejected": failed_records,
         "duration_seconds": round(elapsed, 4),
         "errors": [],
     }
@@ -129,7 +134,8 @@ def main() -> None:
             "input_records": len(records),
             "input_source": f"s3://{s3_bucket}/{s3_source}" if s3_source else str(Path(args.input)),
             "loaded_records": loaded,
-            "rejected_records": rejected,
+            "duplicates_ignored": duplicates_ignored,
+            "failed_records": failed_records,
             "error_rate": round(error_rate, 4),
             "duration_seconds": round(elapsed, 4),
             "mode": "dry-run" if args.dry_run else ("upsert" if args.upsert else "insert"),
@@ -149,7 +155,13 @@ def main() -> None:
         "s3_path": migration_s3_path,
     }))
 
-    logger.success(f"Migration terminee. Charges: {loaded}/{len(records)} | error_rate={error_rate:.2%}")
+    logger.success(
+        "Migration terminee. "
+        f"Charges: {loaded}/{len(records)} | "
+        f"doublons={duplicates_ignored} | "
+        f"failed={failed_records} | "
+        f"error_rate={error_rate:.2%}"
+    )
     logger.info(f"Rapport migration: {migration_report_path}")
 
     loader.close()

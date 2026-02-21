@@ -151,6 +151,57 @@ class MongoDBLoader:
             logger.warning(f"{duplicates} doublons supprimés avant création de l'index unique")
         return duplicates
 
+    def bulk_insert_with_stats(self, records: List[Dict]) -> Dict[str, int]:
+        """Insere en masse et retourne des stats detaillees."""
+        total = len(records)
+        result = {
+            "input_records": total,
+            "inserted_records": 0,
+            "duplicates_ignored": 0,
+            "failed_records": 0,
+        }
+
+        if not records:
+            logger.warning("Aucune donnée à charger dans MongoDB")
+            return result
+
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] {total} enregistrements auraient été insérés")
+            result["inserted_records"] = total
+            return result
+
+        if self.collection is None:
+            raise RuntimeError("Collection MongoDB non initialisée")
+
+        logger.info(f"Insertion de {total} enregistrements dans MongoDB...")
+
+        try:
+            inserted = len(self.collection.insert_many(records, ordered=False).inserted_ids)
+            result["inserted_records"] = inserted
+            logger.success(f"✓ {inserted} enregistrements insérés dans MongoDB")
+            return result
+
+        except BulkWriteError as e:
+            details = e.details or {}
+            inserted = int(details.get("nInserted", 0))
+            write_errors = details.get("writeErrors", []) or []
+            duplicates = sum(1 for err in write_errors if err.get("code") == 11000)
+            failed = max(0, len(write_errors) - duplicates)
+
+            result["inserted_records"] = inserted
+            result["duplicates_ignored"] = duplicates
+            result["failed_records"] = failed
+
+            logger.warning(
+                "Insertion partielle: "
+                f"{inserted} insérés, {duplicates} doublons ignorés, {failed} erreurs"
+            )
+            return result
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'insertion dans MongoDB: {e}")
+            raise
+
     def bulk_insert(self, records: List[Dict]) -> int:
         """
         Insère des enregistrements en masse dans MongoDB
@@ -161,41 +212,50 @@ class MongoDBLoader:
         Returns:
             Nombre d'enregistrements insérés
         """
+        return self.bulk_insert_with_stats(records)["inserted_records"]
+
+    def upsert_records_with_stats(self, records: List[Dict]) -> Dict[str, int]:
+        """Effectue des upserts et retourne des stats detaillees."""
+        total = len(records)
+        result = {
+            "input_records": total,
+            "upserted_records": 0,
+            "failed_records": 0,
+        }
+
         if not records:
-            logger.warning("Aucune donnée à charger dans MongoDB")
-            return 0
+            return result
 
         if self.dry_run:
-            logger.info(f"[DRY-RUN] {len(records)} enregistrements auraient été insérés")
-            return len(records)
+            logger.info(f"[DRY-RUN] {total} enregistrements auraient été upsertés")
+            result["upserted_records"] = total
+            return result
 
         if self.collection is None:
             raise RuntimeError("Collection MongoDB non initialisée")
 
-        logger.info(f"Insertion de {len(records)} enregistrements dans MongoDB...")
+        logger.info(f"Upsert de {total} enregistrements...")
+        for record in records:
+            try:
+                filter_query = {
+                    "station.id": record["station"]["id"],
+                    "timestamp": record["timestamp"]
+                }
+                self.collection.update_one(
+                    filter_query,
+                    {"$set": record},
+                    upsert=True
+                )
+                result["upserted_records"] += 1
+            except Exception as e:
+                result["failed_records"] += 1
+                logger.warning(f"Erreur upsert: {e}")
 
-        try:
-            # Insertion en masse
-            result = self.collection.insert_many(records, ordered=False)
-            inserted_count = len(result.inserted_ids)
-
-            logger.success(f"✓ {inserted_count} enregistrements insérés dans MongoDB")
-            return inserted_count
-
-        except BulkWriteError as e:
-            # Certains enregistrements ont été insérés malgré l'erreur
-            inserted_count = e.details.get('nInserted', 0)
-            duplicates = len(e.details.get('writeErrors', []))
-
-            logger.warning(
-                f"Insertion partielle: {inserted_count} insérés, "
-                f"{duplicates} doublons ignorés"
-            )
-            return inserted_count
-
-        except Exception as e:
-            logger.error(f"Erreur lors de l'insertion dans MongoDB: {e}")
-            raise
+        logger.success(
+            f"✓ {result['upserted_records']} enregistrements upsertés "
+            f"({result['failed_records']} erreurs)"
+        )
+        return result
 
     def upsert_records(self, records: List[Dict]) -> int:
         """
@@ -207,39 +267,7 @@ class MongoDBLoader:
         Returns:
             Nombre d'enregistrements traités
         """
-        if not records:
-            return 0
-
-        if self.dry_run:
-            logger.info(f"[DRY-RUN] {len(records)} enregistrements auraient été upsertés")
-            return len(records)
-
-        if self.collection is None:
-            raise RuntimeError("Collection MongoDB non initialisée")
-
-        logger.info(f"Upsert de {len(records)} enregistrements...")
-
-        count = 0
-        for record in records:
-            try:
-                # Utiliser station_id + timestamp comme clé unique
-                filter_query = {
-                    "station.id": record["station"]["id"],
-                    "timestamp": record["timestamp"]
-                }
-
-                self.collection.update_one(
-                    filter_query,
-                    {"$set": record},
-                    upsert=True
-                )
-                count += 1
-
-            except Exception as e:
-                logger.warning(f"Erreur upsert: {e}")
-
-        logger.success(f"✓ {count} enregistrements upsertés")
-        return count
+        return self.upsert_records_with_stats(records)["upserted_records"]
 
     def close(self):
         """Ferme la connexion MongoDB"""
